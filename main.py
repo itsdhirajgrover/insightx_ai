@@ -26,12 +26,28 @@ app.add_middleware(
 # Initialize database
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database on startup"""
+    """Initialize database and load data if needed"""
     try:
         init_db()
         print("✓ Database initialized successfully")
+        
+        # Check if database has data, if not load sample data
+        from src.database.database import SessionLocal
+        from src.database.models import Transaction
+        
+        db = SessionLocal()
+        transaction_count = db.query(Transaction).count()
+        db.close()
+        
+        if transaction_count == 0:
+            print("📦 Database is empty. Loading sample transactions...")
+            from src.database.data_loader import DataLoader
+            loader = DataLoader()
+            loader.load_data(num_records=250000)
+            print("✓ Sample data loaded successfully")
     except Exception as e:
-        print(f"✗ Database initialization failed: {e}")
+        print(f"✗ Startup error: {e}")
+        # Don't crash, continue with empty database if needed
 
 # Include routes
 app.include_router(router, prefix="/api", tags=["queries"])
@@ -54,8 +70,11 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("FASTAPI_PORT", 8000))
+    # Railway sets PORT env var, fallback to 8000 for local
+    port = int(os.getenv("PORT", os.getenv("FASTAPI_PORT", 8000)))
     host = os.getenv("FASTAPI_HOST", "0.0.0.0")
+    
+    print(f"🚀 Starting server on {host}:{port}")
     
     uvicorn.run(
         "main:app",
