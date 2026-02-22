@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import json
+import os
 from datetime import datetime
 import pandas as pd
 
@@ -49,8 +50,18 @@ st.markdown("""
 # Initialize session state
 if "query_history" not in st.session_state:
     st.session_state.query_history = []
+
+# Load API URL from environment or Streamlit secrets, fall back to localhost
+def get_api_url():
+    # Try Streamlit secrets first (for Streamlit Cloud)
+    try:
+        return st.secrets.get("api_url", "http://localhost:8000")
+    except:
+        # Fall back to environment variable
+        return os.getenv("API_URL", "http://localhost:8000")
+
 if "api_url" not in st.session_state:
-    st.session_state.api_url = "http://localhost:8000"
+    st.session_state.api_url = get_api_url()
 if "session_id" not in st.session_state:
     st.session_state.session_id = None
 
