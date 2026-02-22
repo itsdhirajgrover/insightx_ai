@@ -1,43 +1,65 @@
 import os
 import json
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
 
 class ResponseGenerator:
     """
-    Generates natural language responses from data analysis results
-    Uses LLM for conversational and explainable outputs
+    Generates context-aware natural language responses from data analysis
+    Uses OpenAI LLM for conversational and explainable outputs with conversation history
     """
     
     def __init__(self):
-        try:
-            import openai
-            self.openai_api_key = os.getenv("OPENAI_API_KEY")
-            if not self.openai_api_key:
-                raise ValueError("OPENAI_API_KEY not set")
-            openai.api_key = self.openai_api_key
-            self.client = openai
-            self.use_llm = True
-        except Exception as e:
-            print(f"Warning: LLM integration not available: {e}")
-            self.use_llm = False
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        self.use_llm = bool(self.openai_api_key)
+        
+        if self.use_llm:
+            try:
+                from openai import OpenAI
+                self.client = OpenAI(api_key=self.openai_api_key)
+                print("✓ OpenAI LLM integration enabled")
+            except Exception as e:
+                print(f"⚠ LLM integration failed: {e}")
+                self.use_llm = False
+        else:
+            print("⚠ OPENAI_API_KEY not set - using template responses")
     
-    def generate_response(self, query: str, analysis_result: Dict[str, Any], intent_type: str) -> Dict[str, Any]:
+    def generate_response(
+        self, 
+        query: str, 
+        analysis_result: Dict[str, Any], 
+        intent_type: str,
+        conversation_context: Optional[str] = None,
+        resolved_entities: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
-        Generate conversational response from analysis results
-        Returns explanation, insights, and recommendations
+        Generate conversational response with context awareness for follow-ups
+        
+        Args:
+            query: Current user query
+            analysis_result: Data analysis results from query builder
+            intent_type: Intent classification
+            conversation_context: Previous conversation history for context
+            resolved_entities: Accumulated entities from conversation
         """
         
-        # Extract key insights
+        # Extract insights from analysis
         insights = self._extract_insights(analysis_result, intent_type)
         
-        # Generate explanation
+        # Generate explanation (LLM if available, fallback to template)
         if self.use_llm:
-            explanation = self._generate_llm_response(query, analysis_result, intent_type, insights)
+            explanation = self._generate_llm_response(
+                query, 
+                analysis_result, 
+                intent_type, 
+                insights,
+                conversation_context,
+                resolved_entities
+            )
         else:
-            explanation = self._generate_template_response(analysis_result, intent_type, insights)
+            explanation = self._generate_template_response(analysis_result, intent_type, insights, resolved_entities)
         
         return {
             "query": query,
@@ -45,8 +67,151 @@ class ResponseGenerator:
             "explanation": explanation,
             "insights": insights,
             "raw_data": analysis_result,
+            "resolved_entities": resolved_entities,
             "confidence_score": self._calculate_confidence(analysis_result)
         }
+    
+    def _generate_llm_response(
+        self, 
+        user_query: str, 
+        analysis_result: Dict[str, Any], 
+        intent_type: str, 
+        insights: list,
+        conversation_context: Optional[str] = None,
+        resolved_entities: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Generate response using OpenAI with context awareness"""
+        try:
+            prompt = self._build_context_aware_prompt(
+                user_query,
+                analysis_result,
+                intent_type,
+                insights,
+                conversation_context,
+                resolved_entities
+            )
+            
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """You are InsightX, a financial data analyst AI assistant. 
+Your role is to:
+1. Answer user questions about transaction data clearly and concisely
+2. Provide actionable insights based on the analysis
+3. Consider the conversation context to handle follow-up questions accurately
+4. Maintain consistency with previous responses in the conversation
+5. Present data professionally using Indian currency (₹) without unnecessary jargon"""
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.7,
+                max_tokens=500
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            print(f"LLM generation failed: {e}")
+            return self._generate_template_response(analysis_result, intent_type, insights)
+    
+    def _build_context_aware_prompt(
+        self,
+        user_query: str,
+        analysis_result: Dict[str, Any],
+        intent_type: str,
+        insights: list,
+        conversation_context: Optional[str],
+        resolved_entities: Optional[Dict[str, Any]]
+    ) -> str:
+        """Build a context-aware prompt that includes conversation history"""
+        
+        prompt = f"""Based on the transaction data analysis, answer this question: "{user_query}"
+
+**Analysis Results:**
+- Intent Type: {intent_type}
+- Key Insights: {json.dumps(insights)}
+- Data Summary: {json.dumps(self._summarize_result(analysis_result), default=str)}
+
+**Resolved Context from Conversation:**
+{self._format_resolved_entities(resolved_entities)}"""
+        
+        # Add conversation history if available
+        if conversation_context:
+            prompt += f"""
+
+**Previous Conversation:**
+{conversation_context}
+
+Note: The user may be asking a follow-up question. Use the conversation history above to maintain consistency."""
+        
+        prompt += """
+
+Please provide:
+1. A direct, concise answer to the question
+2. Supporting data points or statistics
+3. One actionable insight or recommendation (if relevant)
+
+Keep the response focused and easy to understand. Use ₹ for currency amounts."""
+        
+        return prompt
+    
+    def _summarize_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a concise summary of analysis result"""
+        summary = {
+            "total_count": result.get("total_count"),
+            "statistics": result.get("statistics"),
+        }
+        
+        # Add intent-specific summaries
+        if result.get("data"):
+            summary["comparison_data"] = result["data"][:3]  # Top 3 items
+        if result.get("segments"):
+            summary["top_segments"] = result["segments"][:3]
+        if result.get("fraud_rate_percent"):
+            summary["fraud_rate"] = result["fraud_rate_percent"]
+            
+        return summary
+    
+    def _format_resolved_entities(self, entities: Optional[Dict[str, Any]]) -> str:
+        """Format resolved entities for prompt context"""
+        if not entities:
+            return "None"
+        
+        formatted = []
+        # Prefer new schema fields (merchant_category, sender/receiver)
+        if entities.get("merchant_category") or entities.get("category"):
+            formatted.append(f"- Merchant Category: {entities.get('merchant_category') or entities.get('category')}")
+        if entities.get("sender_state"):
+            formatted.append(f"- Sender State: {entities['sender_state']}")
+        if entities.get("receiver_state"):
+            formatted.append(f"- Receiver State: {entities['receiver_state']}")
+        if entities.get("state") and 'sender_state' not in entities and 'receiver_state' not in entities:
+            formatted.append(f"- State: {entities['state']}")
+        if entities.get("device_type"):
+            formatted.append(f"- Device: {entities['device_type']}")
+        if entities.get("network_type"):
+            formatted.append(f"- Network: {entities['network_type']}")
+        if entities.get("sender_age_group"):
+            formatted.append(f"- Sender Age Group: {entities['sender_age_group']}")
+        if entities.get("receiver_age_group"):
+            formatted.append(f"- Receiver Age Group: {entities['receiver_age_group']}")
+        if entities.get("age_group") and 'sender_age_group' not in entities and 'receiver_age_group' not in entities:
+            formatted.append(f"- Age Group: {entities['age_group']}")
+        if entities.get('sender_bank'):
+            formatted.append(f"- Sender Bank: {entities['sender_bank']}")
+        if entities.get('receiver_bank'):
+            formatted.append(f"- Receiver Bank: {entities['receiver_bank']}")
+        if entities.get('transaction_type'):
+            formatted.append(f"- Transaction Type: {entities['transaction_type']}")
+        if entities.get('transaction_status'):
+            formatted.append(f"- Transaction Status: {entities['transaction_status']}")
+            
+        return "\n".join(formatted) if formatted else "None"
     
     def _extract_insights(self, result: Dict[str, Any], intent_type: str) -> list:
         """Extract key insights from analysis result"""
@@ -82,46 +247,25 @@ class ResponseGenerator:
         
         return insights
     
-    def _generate_llm_response(self, user_query: str, analysis_result: Dict[str, Any], intent_type: str, insights: list) -> str:
-        """Generate response using LLM with fallback to template"""
-        try:
-            prompt = f"""
-You are a financial data analyst AI. Based on the following analysis results, provide a clear, concise, and actionable response to the user's query.
+    def _generate_template_response(self, result: Dict[str, Any], intent_type: str, insights: list, resolved_entities: Optional[Dict[str, Any]] = None) -> str:
+        """Generate response using templates (fallback when LLM unavailable)"""
+        # Prepend context if available
+        context_str = self._format_resolved_entities(resolved_entities) if resolved_entities else None
 
-User Query: {user_query}
-Intent Type: {intent_type}
-Key Insights: {json.dumps(insights)}
-Detailed Analysis: {json.dumps(analysis_result, indent=2, default=str)}
-
-Please provide:
-1. A direct answer to the user's question
-2. Supporting statistics and trends
-3. One key recommendation based on the data
-
-Keep the response focused, professional, and easy to understand for non-technical stakeholders.
-"""
-            
-            # Note: This requires actual OpenAI API integration
-            # For now, falling back to template
-            return self._generate_template_response(analysis_result, intent_type, insights)
-            
-        except Exception as e:
-            print(f"LLM generation failed: {e}")
-            return self._generate_template_response(analysis_result, intent_type, insights)
-    
-    def _generate_template_response(self, result: Dict[str, Any], intent_type: str, insights: list) -> str:
-        """Generate response using templates"""
-        
         if intent_type == "descriptive":
-            return self._template_descriptive(result, insights)
+            base = self._template_descriptive(result, insights)
         elif intent_type == "comparative":
-            return self._template_comparative(result, insights)
+            base = self._template_comparative(result, insights)
         elif intent_type == "user_segmentation":
-            return self._template_segmentation(result, insights)
+            base = self._template_segmentation(result, insights)
         elif intent_type == "risk_analysis":
-            return self._template_risk(result, insights)
+            base = self._template_risk(result, insights)
         else:
-            return "Analysis complete. See insights for details."
+            base = "Analysis complete. See insights for details."
+
+        if context_str and context_str != "None":
+            return f"**Context:**\n{context_str}\n\n" + base
+        return base
     
     def _template_descriptive(self, result: Dict[str, Any], insights: list) -> str:
         stats = result.get("statistics", {})

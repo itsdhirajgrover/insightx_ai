@@ -32,42 +32,69 @@ class QueryResponse(BaseModel):
 @router.post("/query", response_model=QueryResponse)
 async def process_query(request: QueryRequest, db: Session = Depends(get_db)):
     """
-    Process natural language query and return insights
+    Process natural language query with conversation context support for follow-ups.
+    
+    Pass session_id in context to maintain conversation continuity:
+    Example: {"query": "...", "context": {"session_id": "..."}}
     """
     try:
-        # Step 1: Recognize intent and extract entities
-        # Support conversation context: request.context may contain a session_id
+        # Extract session context
         session_id = None
         if request.context and isinstance(request.context, dict):
             session_id = request.context.get("session_id")
 
-        # initial entity extraction
+        # Step 1: Recognize intent and extract entities
         intent_result = intent_recognizer.recognize_intent(request.query)
 
-        # if we have a session and prior entities, merge them (so follow-ups work)
+        # Step 2: Merge with conversation context for follow-ups
         if session_id:
-            merged_entities = conversation_manager.merge_entities(session_id, intent_result.entities)
-            intent_result.entities = merged_entities
+            # Merge previous entities to handle follow-up references
+            intent_result.entities = conversation_manager.merge_entities(
+                session_id, 
+                intent_result.entities
+            )
         
-        # Step 2: Build and execute query
+        # Step 3: Build and execute query
         query_builder = QueryBuilder(db)
         analysis_result = query_builder.execute_query(
             intent_result.type,
-            intent_result.entities
+            intent_result.entities,
+            request.query  # Pass original query for pattern detection
         )
         
-        # Step 3: Generate natural language response
+        # Step 4: Get conversation context for LLM
+        conversation_context = None
+        resolved_entities = intent_result.entities
+        
+        if session_id:
+            conversation_context = conversation_manager.get_conversation_context(session_id)
+            resolved_entities = conversation_manager.get_resolved_entities(session_id)
+            # Merge current entities with resolved ones
+            resolved_entities.update(intent_result.entities)
+        
+        # Step 5: Generate context-aware response
         response = response_generator.generate_response(
             request.query,
             analysis_result,
-            intent_result.type
+            intent_result.type,
+            conversation_context=conversation_context,
+            resolved_entities=resolved_entities
         )
 
-        # ensure we have a session id to return/update
+        # Step 6: Create or update session
         if not session_id:
             session_id = conversation_manager.create_session()
 
-        conversation_manager.update_session(session_id, intent_result.type, intent_result.entities, analysis_result)
+        # Update session with the new turn (include AI response)
+        conversation_manager.update_session(
+            session_id,
+            request.query,
+            intent_result.type,
+            intent_result.entities,
+            analysis_result,
+            response["explanation"]
+        )
+        
         response["session_id"] = session_id
         
         return QueryResponse(**response)
@@ -122,4 +149,59 @@ async def get_example_queries():
                 "intent": "descriptive"
             }
         ]
+    }
+@router.post("/conversation/start")
+async def start_conversation():
+    """
+    Start a new conversation session.
+    Returns session_id to use in subsequent queries for context awareness.
+    """
+    session_id = conversation_manager.create_session()
+    return {
+        "session_id": session_id,
+        "message": "Conversation started. Use this session_id in future queries for context-aware responses."
+    }
+
+@router.get("/conversation/{session_id}")
+async def get_conversation(session_id: str):
+    """Retrieve conversation history for a session"""
+    session = conversation_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+    
+    return {
+        "session_id": session_id,
+        "created_at": session["created_at"],
+        "last_updated": session["updated_at"],
+        "conversation_history": session["conversation_history"],
+        "total_turns": len(session["conversation_history"])
+    }
+
+@router.delete("/conversation/{session_id}")
+async def end_conversation(session_id: str):
+    """End a conversation and clear its context"""
+    cleared = conversation_manager.clear_session(session_id)
+    if not cleared:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    return {
+        "message": f"Conversation {session_id} has been cleared"
+    }
+
+@router.post("/conversation/{session_id}/reset")
+async def reset_session(session_id: str):
+    """Reset session while keeping the ID (clear history and entities)"""
+    session = conversation_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+    
+    # Clear history but keep the session
+    session["conversation_history"] = []
+    session["last_entities"] = {}
+    session["extracted_context"] = {}
+    session["last_intent"] = None
+    
+    return {
+        "message": f"Session {session_id} has been reset",
+        "session_id": session_id
     }

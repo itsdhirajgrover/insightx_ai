@@ -85,7 +85,7 @@ class DataLoader:
         return transactions
     
     def load_from_csv(self, csv_path: str) -> list:
-        """Load transactions from CSV file"""
+        """Load transactions from CSV file matching new schema"""
         print(f"Loading data from {csv_path}...")
         
         df = pd.read_csv(csv_path)
@@ -94,37 +94,61 @@ class DataLoader:
         print(f"CSV columns: {df.columns.tolist()}")
         print(f"Total records in CSV: {len(df)}")
         
+        # Mapping for day names to numbers
+        day_mapping = {
+            'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3,
+            'Friday': 4, 'Saturday': 5, 'Sunday': 6
+        }
+        
         for idx, row in df.iterrows():
-            # Map CSV columns to Transaction model
-            # Handle different column naming conventions
-            user_id = int(row.get('user_id', row.get('sender_id', idx % 50000)))
-            amount = float(row.get('amount (INR)', row.get('amount', 0)))
-            category = str(row.get('merchant_category', row.get('category', 'Other')))
-            timestamp = pd.to_datetime(row.get('timestamp', pd.Timestamp.now()))
-            device_type = str(row.get('device_type', 'Web'))
-            network_type = str(row.get('network_type', 'WiFi'))
-            state = str(row.get('sender_state', row.get('state', 'Delhi')))
-            age_group = str(row.get('sender_age_group', row.get('age_group', '25-35')))
-            status = str(row.get('transaction_status', row.get('status', 'success')))
-            fraud_flag = bool(row.get('fraud_flag', False))
-            merchant_id = int(row.get('merchant_id', idx % 10000))
-            
-            transaction = Transaction(
-                user_id=user_id,
-                amount=amount,
-                category=category,
-                timestamp=timestamp,
-                device_type=device_type,
-                network_type=network_type,
-                state=state,
-                age_group=age_group,
-                status=status,
-                fraud_flag=fraud_flag,
-                merchant_id=merchant_id,
-                latitude=float(row.get('latitude', 0)),
-                longitude=float(row.get('longitude', 0))
-            )
-            transactions.append(transaction)
+            try:
+                # Handle transaction_id: extract numeric part if it's a string like "TXN0000249838"
+                tx_id = row.get('transaction id', idx + 1)
+                if isinstance(tx_id, str):
+                    # Extract only digits
+                    numeric_id = ''.join(filter(str.isdigit, tx_id))
+                    transaction_id = int(numeric_id) if numeric_id else idx + 1
+                else:
+                    transaction_id = int(tx_id)
+                
+                # Handle day_of_week: convert from string to int if needed
+                day_val = row.get('day_of_week', 'Monday')
+                if isinstance(day_val, str):
+                    day_of_week = day_mapping.get(day_val.strip(), 0)
+                else:
+                    day_of_week = int(day_val)
+                
+                # Handle is_weekend: convert to boolean
+                is_weekend_val = row.get('is_weekend', False)
+                if isinstance(is_weekend_val, str):
+                    is_weekend = is_weekend_val.strip().lower() in ['true', '1', 'yes']
+                else:
+                    is_weekend = bool(is_weekend_val)
+                
+                # Map CSV columns to new Transaction model schema (handling spaces in column names)
+                transaction = Transaction(
+                    transaction_id=transaction_id,
+                    timestamp=pd.to_datetime(row.get('timestamp'), errors='coerce'),
+                    transaction_type=str(row.get('transaction type', 'Transfer')).strip(),
+                    merchant_category=str(row.get('merchant_category', 'Other')).strip(),
+                    amount=float(row.get('amount (INR)', 0)),
+                    transaction_status=str(row.get('transaction_status', 'success')).strip().lower(),
+                    sender_age_group=str(row.get('sender_age_group', '25-35')).strip(),
+                    sender_state=str(row.get('sender_state', 'Delhi')).strip(),
+                    sender_bank=str(row.get('sender_bank', 'HDFC')).strip(),
+                    receiver_age_group=str(row.get('receiver_age_group', '25-35')).strip(),
+                    receiver_bank=str(row.get('receiver_bank', 'ICICI')).strip(),
+                    device_type=str(row.get('device_type', 'Mobile')).strip(),
+                    network_type=str(row.get('network_type', 'WiFi')).strip(),
+                    fraud_flag=bool(row.get('fraud_flag', False)),
+                    hour_of_day=int(row.get('hour_of_day', 12)),
+                    day_of_week=day_of_week,
+                    is_weekend=is_weekend
+                )
+                transactions.append(transaction)
+            except Exception as e:
+                print(f"Error processing row {idx}: {str(e)}")
+                continue
             
             if (idx + 1) % 50000 == 0:
                 print(f"  Processed {idx + 1}/{len(df)} records")
@@ -150,7 +174,7 @@ class DataLoader:
         db.close()
         print("✓ Data import complete!")
     
-    def load_and_populate(self, csv_path: str = None, num_synthetic: int = 250000):
+    def load_and_populate(self, csv_path: str = None, num_synthetic: int = 250000, force_reload: bool = False):
         """Load data (from CSV or generate synthetic) and populate database"""
         
         # Initialize database
@@ -159,15 +183,20 @@ class DataLoader:
         
         # Check if database already has data
         existing_count = db.query(Transaction).count()
-        if existing_count > 0:
-            print(f"Database already contains {existing_count} transactions. Skipping population.")
+        if existing_count > 0 and not force_reload:
+            print(f"Database already contains {existing_count} transactions. Use force_reload=True to reload.")
             db.close()
             return
+        elif existing_count > 0 and force_reload:
+            print(f"Clearing existing {existing_count} transactions...")
+            db.query(Transaction).delete()
+            db.commit()
         
         # Load data
         if csv_path and os.path.exists(csv_path):
             transactions = self.load_from_csv(csv_path)
         else:
+            print("No CSV file provided. Generating synthetic data...")
             transactions = self.generate_synthetic_data(num_synthetic)
         
         # Insert into database
