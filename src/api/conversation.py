@@ -77,13 +77,28 @@ class ConversationManager:
         s["updated_at"] = time.time()
 
     def merge_entities(self, session_id: str, entities: Dict[str, Any]) -> Dict[str, Any]:
-        """Merge current query entities with session context"""
+        """Merge current query entities with session context, preserving important context"""
         s = self.get_session(session_id)
         if not s:
             return entities or {}
         
-        merged = dict(s.get("last_entities", {}))
-        merged.update(entities or {})
+        last = s.get("last_entities", {})
+        current = entities or {}
+        
+        # Start with previous context
+        merged = dict(last)
+        
+        # Update with current entities
+        merged.update(current)
+        
+        # Smart preservation: if current query doesn't specify comparison_dimension
+        # but previous one did, preserve it (for follow-ups like "How about Food?")
+        if 'comparison_dimension' not in current and 'comparison_dimension' in last:
+            # Only preserve if current query seems like a filter/refinement (not a new grouping)
+            has_new_grouping = any(k in current for k in ['segment_by', 'comparison_key'])
+            if not has_new_grouping:
+                merged['comparison_dimension'] = last['comparison_dimension']
+        
         return merged
 
     def get_conversation_context(self, session_id: str) -> str:

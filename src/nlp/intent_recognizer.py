@@ -209,6 +209,10 @@ class IntentRecognizer:
         if any(kw in query_lower for kw in ["group by", "grouped by", "sum by", "total by", "count by", "amount by", "per "]):
             return "comparative"
         
+        # "total/sum/amount ... by X" patterns are comparative (e.g., "total transaction value by state")
+        if any(agg in query_lower for agg in ["total", "sum", "amount", "value"]) and any(dim in query_lower for dim in ["by state", "by age", "by category", "by device", "by bank", "state wise", "age wise", "category wise"]):
+            return "comparative"
+        
         # Priority ordering: risk -> comparative -> segmentation -> descriptive
         for keyword in risk_keywords:
             if keyword in query_lower:
@@ -459,8 +463,9 @@ class IntentRecognizer:
                     "by status": "transaction_status",
                     "by type": "transaction_type"
                 }
-                # Risk analysis and comparative queries need comparison_dimension
-                if any(kw in query_lower for kw in ["fraud", "risk", "failed", "failure", "compare", "comparison", "versus", "vs"]):
+                # Comparative/aggregation queries need comparison_dimension (not segment_by)
+                # Keywords: fraud, risk, compare, total, sum, amount, value, top, show
+                if any(kw in query_lower for kw in ["fraud", "risk", "failed", "failure", "compare", "comparison", "versus", "vs", "total", "sum", "amount", "value", "top", "show"]):
                     entities['comparison_dimension'] = dim_map.get(seg_kw, seg_kw)
                 else:
                     # Pure segmentation queries

@@ -53,6 +53,11 @@ async def process_query(request: QueryRequest, db: Session = Depends(get_db)):
                 session_id, 
                 intent_result.entities
             )
+            
+            # If merged entities have comparison_dimension but intent is descriptive,
+            # upgrade to comparative (follow-up that adds filter but maintains grouping)
+            if intent_result.type == 'descriptive' and intent_result.entities.get('comparison_dimension'):
+                intent_result.type = 'comparative'
         
         # Step 3: Build and execute query
         query_builder = QueryBuilder(db)

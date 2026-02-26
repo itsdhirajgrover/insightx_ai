@@ -97,8 +97,10 @@ class QueryBuilder:
         top_count = self._extract_top_count(query_text)
         
         # If asking for top items in a category, show by merchant
+        # BUT: only if there's no explicit comparison_dimension (or it's merchant_category)
         merchant_category = entities.get('merchant_category') or entities.get('category')
-        if top_count and merchant_category:
+        comparison_dim = entities.get('comparison_dimension')
+        if top_count and merchant_category and (not comparison_dim or comparison_dim == 'merchant_category'):
             return self._comparative_by_merchant(entities, top_count)
         
         # Determine comparison dimension
