@@ -224,48 +224,27 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
         
         if intent_type == "descriptive":
             if "statistics" in result and result["statistics"]:
-                stats = result["statistics"]
-                insights.append(f"Total transactions analyzed: {result.get('total_count', 0)}")
-                if "average_amount" in stats:
-                    insights.append(f"Average transaction amount: ₹{stats['average_amount']:.2f}")
-                if "total_amount" in stats:
-                    insights.append(f"Total transaction value: ₹{stats['total_amount']:.2f}")
+                insights.append(f"Analyzed {result.get('total_count', 0)} transactions")
                 insights.append(f"Success rate: {result.get('success_rate', 0):.2f}%")
         
         elif intent_type == "comparative":
             if "data" in result:
-                metric = (result.get("metric") or "").lower()
                 insights.append(f"Comparison across: {result.get('comparison_key', 'categories')}")
-                for item in result['data'][:3]:
-                    name = item.get('category', 'Unknown')
-                    avg = item.get('average_amount', 0.0)
-                    total = item.get('total_amount', 0.0)
-                    count = item.get('transaction_count', 0)
-                    if metric in ("amount", "total_amount", "total"):
-                        insights.append(f"{name}: ₹{total:.2f} total, {count} transactions")
-                    elif metric == "count":
-                        insights.append(f"{name}: {count} transactions, ₹{avg:.2f} avg")
-                    else:
-                        insights.append(f"{name}: ₹{avg:.2f} avg, {count} transactions")
+                insights.append(f"Total items compared: {len(result['data'])}")
+                if result.get('best_performer'):
+                    insights.append(f"Best performer: {result['best_performer']}")
         
         elif intent_type == "user_segmentation":
             if "segments" in result:
-                top_segment = result['segments'][0] if result['segments'] else None
-                if top_segment:
-                    insights.append(f"Top segment: {top_segment['segment']} with {top_segment['transaction_count']} transactions")
-                insights.append(f"Segmentation by: {result.get('segment_key', 'segment')}")
+                insights.append(f"Segmented by: {result.get('segment_key', 'segment')}")
+                insights.append(f"Total segments: {len(result['segments'])}")
         
         elif intent_type == "risk_analysis":
             insights.append(f"Fraud rate: {result.get('fraud_rate_percent', 0):.2f}%")
-            insights.append(f"Failure rate: {result.get('failure_rate_percent', 0):.2f}%")
             insights.append(f"Risk level: {result.get('risk_level', 'unknown').upper()}")
-            # if group breakdown exists, mention top group rates
             groups = result.get('groups')
             if groups:
-                # show first one or two groups
-                top_groups = groups[:2]
-                grp_str = ", ".join([f"{g['group']} {g.get('fraud_rate',0):.2f}%" for g in top_groups])
-                insights.append(f"Top groups: {grp_str}")
+                insights.append(f"Analyzed {len(groups)} groups")
         
         return insights
     
@@ -308,15 +287,9 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
         # Success / rates
         response += f"- **Success rate:** {result.get('success_rate', 0):.2f}%\n"
 
-        # Range and sample insights
+        # Range
         if stats.get('min_amount') is not None and stats.get('max_amount') is not None:
             response += f"- **Range:** ₹{stats.get('min_amount', 0):,.2f} — ₹{stats.get('max_amount', 0):,.2f}\n"
-
-        # Add top insights (concise)
-        if insights:
-            response += "\n**Key insights:**\n"
-            for insight in insights[:3]:
-                response += f"- {insight}\n"
 
         return response
     
@@ -356,12 +329,6 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
         if result.get('total_count') is not None:
             response += f"- **Total transactions analyzed:** {result.get('total_count',0):,}\n"
 
-        # Add short insights
-        if insights:
-            response += "\n**Key insights:**\n"
-            for insight in insights[:4]:
-                response += f"- {insight}\n"
-
         # Detailed top segments
         segments = result.get('segments', [])
         if segments:
@@ -384,18 +351,11 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
             response += f"- **Failure rate:** {result.get('failure_rate_percent',0):.2f}%\n"
         response += f"- **Risk level:** {result.get('risk_level','unknown').upper()}\n"
 
-        # Insights
-        if insights:
-            response += "\n**Key insights:**\n"
-            for insight in insights:
-                response += f"- {insight}\n"
-
         # Group breakdown (state/bank etc.)
         groups = result.get('groups', [])
         if groups:
             response += "\n**Group breakdown:**\n"
             for item in groups[:5]:
-                # include fraud rate if available
                 line = f"- {item.get('group','Unknown')}: "
                 if 'fraud_rate' in item:
                     line += f"{item['fraud_rate']:.2f}% fraud rate"
