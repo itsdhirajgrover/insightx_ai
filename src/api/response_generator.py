@@ -193,9 +193,7 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
             formatted.append(f"- Merchant Category: {entities.get('merchant_category') or entities.get('category')}")
         if entities.get("sender_state"):
             formatted.append(f"- Sender State: {entities['sender_state']}")
-        if entities.get("receiver_state"):
-            formatted.append(f"- Receiver State: {entities['receiver_state']}")
-        if entities.get("state") and 'sender_state' not in entities and 'receiver_state' not in entities:
+        if entities.get("state") and 'sender_state' not in entities:
             formatted.append(f"- State: {entities['state']}")
         if entities.get("device_type"):
             formatted.append(f"- Device: {entities['device_type']}")

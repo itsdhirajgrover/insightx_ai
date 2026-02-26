@@ -100,7 +100,9 @@ async def process_query(request: QueryRequest, db: Session = Depends(get_db)):
         return QueryResponse(**response)
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+        import traceback
+        full_trace = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}\n{full_trace}")
 
 @router.get("/health")
 async def health_check():
