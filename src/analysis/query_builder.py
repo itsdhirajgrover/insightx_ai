@@ -485,8 +485,10 @@ class QueryBuilder:
             comp_map = {
                 'state': Transaction.sender_state,
                 'sender_state': Transaction.sender_state,
+                'receiver_state': Transaction.receiver_state,
                 'sender_bank': Transaction.sender_bank,
                 'receiver_bank': Transaction.receiver_bank,
+                'bank': Transaction.sender_bank,  # default to sender for generic
                 'merchant_category': Transaction.merchant_category,
                 'device_type': Transaction.device_type,
                 'network_type': Transaction.network_type,

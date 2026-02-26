@@ -458,32 +458,22 @@ class IntentRecognizer:
         seg_keywords = ["by state", "by age", "by category", "by device", "by network", "by bank", "by status", "by type"]
         for seg_kw in seg_keywords:
             if seg_kw in query_lower:
-                if any(kw in query_lower for kw in ["compare", "comparison", "versus", "vs"]):
-                    # It's a comparison
-                    dim_map = {
-                        "by state": "state",
-                        "by age": "age_group",
-                        "by category": "merchant_category",
-                        "by device": "device_type",
-                        "by network": "network_type",
-                        "by bank": "bank",
-                        "by status": "transaction_status",
-                        "by type": "transaction_type"
-                    }
+                dim_map = {
+                    "by state": "state",
+                    "by age": "age_group",
+                    "by category": "merchant_category",
+                    "by device": "device_type",
+                    "by network": "network_type",
+                    "by bank": "bank",
+                    "by status": "transaction_status",
+                    "by type": "transaction_type"
+                }
+                # Risk analysis and comparative queries need comparison_dimension
+                if any(kw in query_lower for kw in ["fraud", "risk", "failed", "failure", "compare", "comparison", "versus", "vs"]):
                     entities['comparison_dimension'] = dim_map.get(seg_kw, seg_kw)
                 else:
-                    # It's a segmentation
-                    seg_map = {
-                        "by state": "state",
-                        "by age": "age_group",
-                        "by category": "merchant_category",
-                        "by device": "device_type",
-                        "by network": "network_type",
-                        "by bank": "bank",
-                        "by status": "transaction_status",
-                        "by type": "transaction_type"
-                    }
-                    entities['segment_by'] = seg_map.get(seg_kw, seg_kw)
+                    # Pure segmentation queries
+                    entities['segment_by'] = dim_map.get(seg_kw, seg_kw)
                 break
 
         # If user mentions the dimension word alone (e.g., 'state' or 'state-wise' hyphen),
