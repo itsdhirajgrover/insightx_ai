@@ -1,6 +1,6 @@
 from typing import Dict, List, Optional, Any
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, desc
+from sqlalchemy import func, and_, desc, case
 from src.database.models import Transaction
 import statistics
 from datetime import datetime, timedelta
@@ -117,7 +117,8 @@ class QueryBuilder:
         key_mapping = {
             'category': 'merchant_category',
             'state': 'sender_state',
-            'age_group': 'sender_age_group'
+            'age_group': 'sender_age_group',
+            'bank': 'sender_bank'
         }
         comparison_key = key_mapping.get(comparison_key, comparison_key)
         
@@ -134,6 +135,20 @@ class QueryBuilder:
         
         if 'device_type' in entities and comparison_key != 'device_type':
             base_filters.append(Transaction.device_type == entities['device_type'])
+
+        # If comparison_values provided, restrict to those values for the comparison_key
+        comparison_values = entities.get('comparison_values')
+        column_for_key = {
+            'device_type': Transaction.device_type,
+            'network_type': Transaction.network_type,
+            'merchant_category': Transaction.merchant_category,
+            'sender_state': Transaction.sender_state,
+            'sender_bank': Transaction.sender_bank,
+            'receiver_bank': Transaction.receiver_bank
+        }
+        if comparison_values and comparison_key in column_for_key:
+            col = column_for_key[comparison_key]
+            base_filters.append(col.in_(comparison_values))
         
         sender_age_group = entities.get('sender_age_group') or entities.get('age_group')
         if sender_age_group and comparison_key != 'sender_age_group':
@@ -207,6 +222,20 @@ class QueryBuilder:
             for filt in base_filters:
                 groups = groups.filter(filt)
             groups = groups.group_by(Transaction.device_type).all()
+
+        # Handle bank comparison (sender/receiver)
+        if comparison_key in ('sender_bank', 'receiver_bank'):
+            # rebuild groups specifically for bank
+            col = Transaction.sender_bank if comparison_key == 'sender_bank' else Transaction.receiver_bank
+            groups = self.db.query(
+                col,
+                func.count(Transaction.transaction_id).label('count'),
+                func.avg(Transaction.amount).label('avg_amount'),
+                func.sum(Transaction.amount).label('total_amount')
+            )
+            for filt in base_filters:
+                groups = groups.filter(filt)
+            groups = groups.group_by(col).all()
         
         # Build comparison data
         for group in groups:
@@ -217,24 +246,53 @@ class QueryBuilder:
                 "total_amount": float(group[3]) if group[3] else 0
             })
         
-        # Sort by average amount (descending)
-        comparison_data = sorted(comparison_data, key=lambda x: x['average_amount'], reverse=True)
+        # Determine sort key based on metric
+        metric = entities.get('metric', '')
+        if metric == 'count':
+            sort_key = lambda x: x['transaction_count']
+        elif 'avg' in metric:
+            sort_key = lambda x: x['average_amount']
+        elif metric in ('amount', 'total_amount', 'total'):
+            sort_key = lambda x: x['total_amount']
+        else:
+            # default to average
+            sort_key = lambda x: x['average_amount']
+
+        comparison_data = sorted(comparison_data, key=sort_key, reverse=True)
         
         total_count = sum([d['transaction_count'] for d in comparison_data]) if comparison_data else 0
 
         return {
             "insight": f"Compared across {comparison_key}",
             "comparison_key": comparison_key,
+            "metric": entities.get('metric'),
             "data": comparison_data[:top_count] if top_count else comparison_data,
             "best_performer": comparison_data[0]['category'] if comparison_data else None,
             "total_count": total_count
         }
     
     def _comparative_by_merchant(self, entities: Dict[str, str], top_count: int = 3) -> Dict[str, Any]:
-        """Show top merchants/categories by transaction count in a category"""
-        
+        """Show top merchants/categories by transaction count in a category.
+
+        Note: the current dataset only tracks merchant_category (like Shopping, Food)
+        and does not include individual merchant names. When the user asks for
+        "top merchants" we can't provide merchant-level detail; return a
+        descriptive message instead.
+        """
+
         merchant_category = entities.get('merchant_category') or entities.get('category', '')
-        
+
+        # if the model doesn't have merchant_name column, bail out with explanation
+        if not hasattr(Transaction, 'merchant_name'):
+            # fall back to returning a message instead of data
+            return {
+                "insight": "Dataset contains only merchant categories (e.g. \"Shopping\"); individual merchant names are not available.",
+                "comparison_key": "merchant_category",
+                "data": [],
+                "best_performer": None,
+                "total_count": 0
+            }
+
         # Query top items in this category (ordered by transaction count)
         result = self.db.query(
             Transaction.merchant_category,
@@ -373,28 +431,98 @@ class QueryBuilder:
     
     def _risk_analysis(self, entities: Dict[str, str]) -> Dict[str, Any]:
         """Analyze fraud flags and failed transactions"""
-        
+
         base_query = self.db.query(Transaction)
-        
+        # collect filters so we can reuse them later for grouped queries
+        base_filters: List = []
+
         merchant_category = entities.get('merchant_category') or entities.get('category')
         if merchant_category:
             base_query = base_query.filter(Transaction.merchant_category == merchant_category)
-        
+            base_filters.append(Transaction.merchant_category == merchant_category)
+
+        # state filters (sender/receiver/generic)
+        if 'sender_state' in entities:
+            base_query = base_query.filter(Transaction.sender_state == entities['sender_state'])
+            base_filters.append(Transaction.sender_state == entities['sender_state'])
+        elif 'receiver_state' in entities:
+            base_query = base_query.filter(Transaction.receiver_state == entities['receiver_state'])
+            base_filters.append(Transaction.receiver_state == entities['receiver_state'])
+        elif 'state' in entities:
+            # generic state maps to sender_state by default
+            base_query = base_query.filter(Transaction.sender_state == entities['state'])
+            base_filters.append(Transaction.sender_state == entities['state'])
+
+        # bank filters
+        if 'sender_bank' in entities:
+            base_query = base_query.filter(Transaction.sender_bank == entities['sender_bank'])
+            base_filters.append(Transaction.sender_bank == entities['sender_bank'])
+        elif 'receiver_bank' in entities:
+            base_query = base_query.filter(Transaction.receiver_bank == entities['receiver_bank'])
+            base_filters.append(Transaction.receiver_bank == entities['receiver_bank'])
+        elif 'bank' in entities:
+            # generic bank could be either side; apply to both via OR
+            bank = entities['bank']
+            base_query = base_query.filter(
+                (Transaction.sender_bank == bank) | (Transaction.receiver_bank == bank)
+            )
+            base_filters.append((Transaction.sender_bank == bank) | (Transaction.receiver_bank == bank))
+
         if 'device_type' in entities:
             base_query = base_query.filter(Transaction.device_type == entities['device_type'])
-        
+            base_filters.append(Transaction.device_type == entities['device_type'])
+
         total_transactions = base_query.count()
-        
+
         # Get fraud stats
         fraud_count = base_query.filter(Transaction.fraud_flag == True).count()
         failed_count = base_query.filter(Transaction.transaction_status == "failed").count()
-        
+
+        # optional grouping by comparison dimension
+        group_results = None
+        comp = entities.get('comparison_dimension')
+        if comp:
+            comp_map = {
+                'state': Transaction.sender_state,
+                'sender_state': Transaction.sender_state,
+                'sender_bank': Transaction.sender_bank,
+                'receiver_bank': Transaction.receiver_bank,
+                'merchant_category': Transaction.merchant_category,
+                'device_type': Transaction.device_type,
+                'network_type': Transaction.network_type,
+            }
+            col = comp_map.get(comp)
+            if col is not None:
+                grp_q = self.db.query(
+                    col.label('group'),
+                    func.count(Transaction.transaction_id).label('total'),
+                    func.sum(case((Transaction.fraud_flag == True, 1), else_=0)).label('fraud_count')
+                )
+                for filt in base_filters:
+                    grp_q = grp_q.filter(filt)
+                grp_q = grp_q.group_by(col).all()
+                group_results = [{
+                    'group': row[0] if row[0] else 'Unknown',
+                    'total': row[1],
+                    'fraud_count': row[2],
+                    'fraud_rate': (row[2] / row[1] * 100) if row[1] else 0
+                } for row in grp_q]
+
+        # fraud by category should respect any filters applied above (state, bank, etc.)
         fraud_by_category = self.db.query(
             Transaction.merchant_category,
             func.count(Transaction.transaction_id).label('fraud_count')
-        ).filter(Transaction.fraud_flag == True).group_by(Transaction.merchant_category).all()
-        
-        return {
+        ).filter(Transaction.fraud_flag == True)
+        for filt in base_filters:
+            fraud_by_category = fraud_by_category.filter(filt)
+        fraud_by_category = fraud_by_category.group_by(Transaction.merchant_category).all()
+        # sort and limit if requested
+        if entities.get('top_n') or entities.get('bottom_n'):
+            reverse = True if entities.get('top_n') else False
+            n = entities.get('top_n') or entities.get('bottom_n')
+            fraud_by_category = sorted(fraud_by_category, key=lambda x: x[1], reverse=reverse)[:n]
+
+        result = {
             "insight": "Risk analysis summary",
             "total_transactions": total_transactions,
             "total_count": total_transactions,
@@ -403,8 +531,11 @@ class QueryBuilder:
             "failed_count": failed_count,
             "failure_rate_percent": (failed_count / total_transactions * 100) if total_transactions > 0 else 0,
             "fraud_by_category": [
-                {"category": f[0], "fraud_count": f[1]} 
+                {"category": f[0], "fraud_count": f[1]}
                 for f in fraud_by_category
             ],
             "risk_level": "high" if (fraud_count / total_transactions * 100) > 5 else "medium" if (fraud_count / total_transactions * 100) > 2 else "low"
         }
+        if group_results is not None:
+            result['groups'] = group_results
+        return result

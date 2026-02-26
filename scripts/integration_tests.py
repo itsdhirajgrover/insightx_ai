@@ -7,6 +7,11 @@ cases = [
     {'q':'Top 5 merchants for Shopping'},
     {'q':'Show transaction patterns by age group'},
     {'q':'What is the fraud rate for HDFC?'},
+    {'q':'Give me fraud rate state wise'},
+    {'q':'Give me fraud rate state wise and show groups'},
+    {'q':'Give me fraud rate in Delhi'},
+    {'q':'Top 3 fraud categories in Delhi'},
+    {'q':'What is the fraud rate for HDFC?'},
     {'q':'Transactions to Karnataka'},
     {'q':'Transactions from Karnataka'},
 ]
@@ -19,13 +24,17 @@ for i,c in enumerate(cases,1):
         print(f"\n[{i}] {c['q']} -> {r.status_code}")
         print('  intent:', out.get('intent'))
         print('  insights:', out.get('insights')[:3])
+        if 'groups' in out.get('raw_data', {}):
+            print('  groups:', out['raw_data']['groups'][:3])
+        # print any filters applied (for debug)
+        print('  raw_data keys:', list(out.get('raw_data', {}).keys()))
     except Exception as e:
         print(f"\n[{i}] FAILED: {e}")
 
 # Session follow-up test
 print('\nRunning session follow-up test...')
 try:
-    r = requests.post(base+'/conversation/start')
+    r = requests.post(base+'/api/conversation/start')
     sid = r.json()['session_id']
     print('  session_id:', sid)
     # First query with session

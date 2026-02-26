@@ -1,6 +1,7 @@
 import re
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
+from difflib import get_close_matches
 
 @dataclass
 class Intent:
@@ -48,12 +49,38 @@ class IntentRecognizer:
         self.age_groups = ["13-18", "18-25", "25-35", "35-45", "45-55", "55+"]
         
         self.banks = [
-            "HDFC", "ICIC", "SBI", "Axis", "IDBI", "PNB", "BOB", "Union",
-            "Kotak", "IndusInd", "YES", "ICIC", "RBL", "Federal", "Airtel",
+            "HDFC", "ICICI", "SBI", "Axis", "IDBI", "PNB", "BOB", "Union",
+            "Kotak", "IndusInd", "YES", "RBL", "Federal", "Airtel",
             "Google Pay", "PhonePe", "Paytm", "Amazon Pay"
         ]
         
         self.transaction_statuses = ["Success", "Failed", "Pending", "Declined", "Timeout"]
+        
+    def fuzzy_match(self, user_input: str, valid_options: List[str], threshold: float = 0.8) -> Optional[str]:
+        """
+        Fuzzy match user input against valid list of options.
+        Handles typos, partial matches, and case variations.
+        
+        Args:
+            user_input: Text from user query (e.g., "Mahrashtra", "foo")
+            valid_options: List of valid canonical values (e.g., all states, categories)
+            threshold: Similarity score threshold (0-1, default 0.8 = 80%)
+        
+        Returns:
+            Best match if found above threshold, else None
+        """
+        if not user_input or not valid_options:
+            return None
+        
+        # Try exact match first (case insensitive)
+        user_lower = user_input.lower()
+        for option in valid_options:
+            if option.lower() == user_lower:
+                return option
+        
+        # Try fuzzy match
+        matches = get_close_matches(user_input, valid_options, n=1, cutoff=threshold)
+        return matches[0] if matches else None
         
     def recognize_intent(self, query: str) -> Intent:
         """
@@ -67,6 +94,28 @@ class IntentRecognizer:
         
         # Extract entities
         entities = self._extract_entities(query_lower)
+
+        # Normalize: if user asked for segmentation (e.g., 'state wise', 'by state')
+        # ensure segment_by is populated from comparison_dimension when present
+        if intent_type == 'user_segmentation':
+            if 'comparison_dimension' in entities and 'segment_by' not in entities:
+                conv = {
+                    # default to sender-side fields for ambiguous segments
+                    'state': 'sender_state',
+                    'age_group': 'sender_age_group',
+                    'age': 'sender_age_group',
+                    'category': 'merchant_category',
+                    'merchant_category': 'merchant_category',
+                    'device': 'device_type',
+                    'device_type': 'device_type',
+                    'network': 'network_type',
+                    'bank': 'sender_bank',
+                    'sender_bank': 'sender_bank',
+                    'receiver_bank': 'receiver_bank',
+                    'status': 'transaction_status',
+                    'type': 'transaction_type'
+                }
+                entities['segment_by'] = conv.get(entities['comparison_dimension'], entities['comparison_dimension'])
         
         # Calculate confidence based on entity extraction
         confidence = min(0.95, 0.7 + len(entities) * 0.05)
@@ -136,6 +185,8 @@ class IntentRecognizer:
             "between", "across", "top", "top 3", "top 5", "top 10",
             "best", "worst", "highest", "lowest", "ranking", "ranked"
         ]
+        # support explicit grouping/comparison phrases
+        comparative_keywords += ["group by", "grouped by", "sum by", "total by", "amount by", "per bank", "by bank", "bank wise", "bank-wise"]
         
         # Segmentation patterns
         segmentation_keywords = [
@@ -149,6 +200,14 @@ class IntentRecognizer:
             "least", "analyze", "what are", "what is",
             "trend", "pattern", "distribution"
         ]
+
+        # include bank-related comparative/segmentation triggers
+        if any(kw in query_lower for kw in ["bank wise", "bank-wise", "by bank", "per bank", "per-bank", "amount by bank", "amount per bank"]):
+            return "comparative"
+
+        # If user asks for grouping or aggregation (sum/total/count) prefer comparative/segmentation
+        if any(kw in query_lower for kw in ["group by", "grouped by", "sum by", "total by", "count by", "amount by", "per "]):
+            return "comparative"
         
         # Priority ordering: risk -> comparative -> segmentation -> descriptive
         for keyword in risk_keywords:
@@ -171,20 +230,25 @@ class IntentRecognizer:
     
     def _extract_entities(self, query: str) -> Dict[str, str]:
         """
-        Extract entities from query based on real database schema:
-        - merchant_category, transaction_type, transaction_status
-        - sender_state, receiver_state, sender_age_group, receiver_age_group
-        - sender_bank, receiver_bank, device_type, network_type
-        - temporal: hour_of_day, day_of_week, is_weekend
+        Extract entities from query based on real database schema.
+        Uses fuzzy matching to handle typos and spelling mistakes.
         """
         entities = {}
         query_lower = query.lower()
         
-        # Extract merchant categories
+        # Extract merchant categories (fuzzy match)
         for category in self.merchant_categories:
             if category.lower() in query_lower:
+                # Exact substring found
                 entities['merchant_category'] = category
                 break
+        if 'merchant_category' not in entities:
+            # Try fuzzy match for typos
+            for word in query.split():
+                matched = self.fuzzy_match(word, self.merchant_categories, threshold=0.75)
+                if matched:
+                    entities['merchant_category'] = matched
+                    break
         
         # Extract transaction types
         for tx_type in self.transaction_types:
@@ -198,17 +262,37 @@ class IntentRecognizer:
                 entities['transaction_status'] = status
                 break
         
-        # Extract devices
+        # Extract devices (support multiple devices for comparisons)
+        devices_found = []
         for device in self.devices:
             if device.lower() in query_lower:
-                entities['device_type'] = device
-                break
+                devices_found.append(device)
+        # Try fuzzy match for typos
+        if not devices_found:
+            for word in query.split():
+                matched = self.fuzzy_match(word, self.devices, threshold=0.75)
+                if matched and matched not in devices_found:
+                    devices_found.append(matched)
         
-        # Extract networks
+        if devices_found:
+            if len(devices_found) > 1:
+                entities['comparison_dimension'] = 'device_type'
+                entities['comparison_values'] = devices_found
+            else:
+                entities['device_type'] = devices_found[0]
+        
+        # Extract networks (fuzzy match for typos)
         for network in self.networks:
             if network.lower() in query_lower:
                 entities['network_type'] = network
                 break
+        # Try fuzzy match for typos if no exact match
+        if 'network_type' not in entities:
+            for word in query.split():
+                matched = self.fuzzy_match(word, self.networks, threshold=0.75)
+                if matched:
+                    entities['network_type'] = matched
+                    break
         
         # Extract sender state and age group
         for state in self.states:
@@ -225,10 +309,19 @@ class IntentRecognizer:
                 entities['receiver_state'] = state
         
         # If just "state" mentioned without sender/receiver context
+        # First try exact match
         for state in self.states:
-            if state.lower() in query_lower and 'sender_state' not in entities and 'receiver_state' not in entities:
-                entities['state'] = state  # Generic state (will be used as filter)
+            if state.lower() in query_lower and 'sender_state' not in entities and 'receiver_state' not in entities and 'state' not in entities:
+                entities['state'] = state
                 break
+        # If no exact match, try fuzzy match
+        if 'state' not in entities and 'sender_state' not in entities and 'receiver_state' not in entities:
+            for word in query.split():
+                if len(word) > 3:  # Skip short words
+                    matched = self.fuzzy_match(word, self.states, threshold=0.80)
+                    if matched:
+                        entities['state'] = matched
+                        break
         
         # Extract sender age group
         for age_group in self.age_groups:
@@ -246,7 +339,7 @@ class IntentRecognizer:
                 entities['age_group'] = age_group  # Generic age group
                 break
         
-        # Extract banks
+        # Extract banks (fuzzy match for typos like "HDFL" -> "HDFC")
         # Bank mention handling: detect "to <bank>", "from <bank>", or explicit sender/receiver
         for bank in self.banks:
             bk_l = bank.lower()
@@ -265,6 +358,56 @@ class IntentRecognizer:
                 else:
                     entities['bank'] = bank
                 break
+        
+        # Fuzzy match banks if no exact match found
+        if 'bank' not in entities and 'sender_bank' not in entities and 'receiver_bank' not in entities:
+            for word in query.split():
+                if len(word) > 2:
+                    matched = self.fuzzy_match(word, self.banks, threshold=0.75)
+                    if matched:
+                        if "sender" in query_lower:
+                            entities['sender_bank'] = matched
+                        elif "receiver" in query_lower or "to " in query_lower:
+                            entities['receiver_bank'] = matched
+                        else:
+                            entities['bank'] = matched
+                        break
+
+        # Patterns like 'per bank', 'by bank', 'bank wise', 'top banks' -> set comparison dimension
+        if re.search(r"\b(bank\s*-?wise|by bank|per bank|amount per bank|amount by bank|top\s+banks|top\s+bank)\b", query_lower):
+            # prefer explicit direction if present
+            if any(w in query_lower for w in ["receiver", "to ", "sent to"]):
+                entities['comparison_dimension'] = 'receiver_bank'
+            elif any(w in query_lower for w in ["sender", "from ", "sent from"]):
+                entities['comparison_dimension'] = 'sender_bank'
+            else:
+                entities['comparison_dimension'] = 'sender_bank'
+
+        # Handle explicit 'receiver bank' / 'sender bank' phrases (e.g., 'by receiver bank')
+        if 'receiver bank' in query_lower or re.search(r"\bby\s+receiver\s+bank\b", query_lower):
+            entities['comparison_dimension'] = 'receiver_bank'
+        elif 'sender bank' in query_lower or re.search(r"\bby\s+sender\s+bank\b", query_lower):
+            entities['comparison_dimension'] = 'sender_bank'
+
+        # Detect aggregation metric (amount, sum, total, avg, count, fraud/failure rates)
+        if re.search(r"\b(sum|total|amount|revenue|spend|spent)\b", query_lower):
+            entities['metric'] = 'amount'
+        if re.search(r"\b(average|avg|mean)\b", query_lower):
+            entities['metric'] = 'avg_amount'
+        if re.search(r"\b(count|how many|number of|no\. of)\b", query_lower):
+            entities['metric'] = 'count'
+        if re.search(r"\b(fraud rate|fraud|flagged|fraudulent)\b", query_lower):
+            entities['metric'] = 'fraud_rate'
+        if re.search(r"\b(failure rate|failed|failure|failure rate)\b", query_lower):
+            entities['metric'] = 'failure_rate'
+
+        # capture top/bottom N specification
+        top_match = re.search(r"top\s*(\d+)", query_lower)
+        if top_match:
+            entities['top_n'] = int(top_match.group(1))
+        bottom_match = re.search(r"bottom\s*(\d+)", query_lower)
+        if bottom_match:
+            entities['bottom_n'] = int(bottom_match.group(1))
         
         # Extract temporal references
         time_ref = self._extract_time_reference(query_lower)
@@ -296,7 +439,7 @@ class IntentRecognizer:
             entities['is_weekend'] = "true"
         
         # Extract comparison dimension for "X wise" patterns
-        wise_match = re.search(r"\b(state|age|category|device|network|bank|status|type)\s+wise\b", query_lower)
+        wise_match = re.search(r"\b(state|age|category|device|network|bank|status|type)(?:\s|-)?wise\b", query_lower)
         if wise_match:
             val = wise_match.group(1)
             conversion = {
@@ -304,12 +447,12 @@ class IntentRecognizer:
                 'category': 'merchant_category',
                 'device': 'device_type',
                 'network': 'network_type',
-                'bank': 'sender_bank',
+                'bank': 'bank',
                 'status': 'transaction_status',
                 'type': 'transaction_type'
             }
+            # assign generic 'bank' and let direction be resolved below if needed
             entities['comparison_dimension'] = conversion.get(val, val)
-            return entities
 
         # Detect explicit segmentation requests like "by state", "by age", etc.
         seg_keywords = ["by state", "by age", "by category", "by device", "by network", "by bank", "by status", "by type"]
@@ -323,7 +466,7 @@ class IntentRecognizer:
                         "by category": "merchant_category",
                         "by device": "device_type",
                         "by network": "network_type",
-                        "by bank": "sender_bank",
+                        "by bank": "bank",
                         "by status": "transaction_status",
                         "by type": "transaction_type"
                     }
@@ -336,12 +479,38 @@ class IntentRecognizer:
                         "by category": "merchant_category",
                         "by device": "device_type",
                         "by network": "network_type",
-                        "by bank": "sender_bank",
+                        "by bank": "bank",
                         "by status": "transaction_status",
                         "by type": "transaction_type"
                     }
                     entities['segment_by'] = seg_map.get(seg_kw, seg_kw)
                 break
+
+        # If user mentions the dimension word alone (e.g., 'state' or 'state-wise' hyphen),
+        # but we haven't set segmentation/comparison, set a sensible default.
+        if 'comparison_dimension' not in entities and 'segment_by' not in entities:
+            for dim in ['state', 'age', 'category', 'device', 'network', 'bank']:
+                # match standalone word or hyphenated forms like 'state-wise'
+                if re.search(rf"\b{re.escape(dim)}\b", query_lower) or re.search(rf"\b{re.escape(dim)}-wise\b", query_lower) or re.search(rf"\b{re.escape(dim)}wise\b", query_lower):
+                    # map dim to comparison_dimension
+                    dim_map = {
+                        'state': 'state',
+                        'age': 'age_group',
+                        'category': 'merchant_category',
+                        'device': 'device_type',
+                        'network': 'network_type',
+                        'bank': 'bank'
+                    }
+                    entities['comparison_dimension'] = dim_map.get(dim, dim)
+                    # For segmentation intent, segment_by will be set by recognize_intent normalization
+                    break
+
+        # If comparison_dimension is generic 'bank', refine using directional words
+        if entities.get('comparison_dimension') == 'bank':
+            if any(w in query_lower for w in ["receiver", "to ", "sent to", "received by"]):
+                entities['comparison_dimension'] = 'receiver_bank'
+            elif any(w in query_lower for w in ["sender", "from ", "sent from", "sent by"]):
+                entities['comparison_dimension'] = 'sender_bank'
         
         return entities
     

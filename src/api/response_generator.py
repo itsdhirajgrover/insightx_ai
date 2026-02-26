@@ -19,12 +19,13 @@ class ResponseGenerator:
             try:
                 from openai import OpenAI
                 self.client = OpenAI(api_key=self.openai_api_key)
-                print("✓ OpenAI LLM integration enabled")
+                # log success without unicode to avoid encoding problems
+                print("OpenAI LLM integration enabled")
             except Exception as e:
-                print(f"⚠ LLM integration failed: {e}")
+                print(f"LLM integration failed: {e}")
                 self.use_llm = False
         else:
-            print("⚠ OPENAI_API_KEY not set - using template responses")
+            print("OPENAI_API_KEY not set - using template responses")
     
     def generate_response(
         self, 
@@ -174,7 +175,11 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
             summary["top_segments"] = result["segments"][:3]
         if result.get("fraud_rate_percent"):
             summary["fraud_rate"] = result["fraud_rate_percent"]
-            
+
+        # include grouped breakdowns (top 3)
+        if result.get("groups"):
+            summary["groups"] = result["groups"][:3]
+
         return summary
     
     def _format_resolved_entities(self, entities: Optional[Dict[str, Any]]) -> str:
@@ -229,9 +234,19 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
         
         elif intent_type == "comparative":
             if "data" in result:
+                metric = (result.get("metric") or "").lower()
                 insights.append(f"Comparison across: {result.get('comparison_key', 'categories')}")
                 for item in result['data'][:3]:
-                    insights.append(f"{item['category']}: ₹{item['average_amount']:.2f} avg, {item['transaction_count']} transactions")
+                    name = item.get('category', 'Unknown')
+                    avg = item.get('average_amount', 0.0)
+                    total = item.get('total_amount', 0.0)
+                    count = item.get('transaction_count', 0)
+                    if metric in ("amount", "total_amount", "total"):
+                        insights.append(f"{name}: ₹{total:.2f} total, {count} transactions")
+                    elif metric == "count":
+                        insights.append(f"{name}: {count} transactions, ₹{avg:.2f} avg")
+                    else:
+                        insights.append(f"{name}: ₹{avg:.2f} avg, {count} transactions")
         
         elif intent_type == "user_segmentation":
             if "segments" in result:
@@ -244,6 +259,13 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
             insights.append(f"Fraud rate: {result.get('fraud_rate_percent', 0):.2f}%")
             insights.append(f"Failure rate: {result.get('failure_rate_percent', 0):.2f}%")
             insights.append(f"Risk level: {result.get('risk_level', 'unknown').upper()}")
+            # if group breakdown exists, mention top group rates
+            groups = result.get('groups')
+            if groups:
+                # show first one or two groups
+                top_groups = groups[:2]
+                grp_str = ", ".join([f"{g['group']} {g.get('fraud_rate',0):.2f}%" for g in top_groups])
+                insights.append(f"Top groups: {grp_str}")
         
         return insights
     
@@ -301,6 +323,7 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
     def _template_comparative(self, result: Dict[str, Any], insights: list) -> str:
         # Build a clean, tabular-style comparative summary
         key = result.get('comparison_key', 'dimensions')
+        metric = (result.get('metric') or '').lower()
         title = key.replace('_', ' ').title() + ' Comparison'
         response = f"**{title}**\n\n"
         response += f"- **Scope:** `{key}`\n"
@@ -310,8 +333,14 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
             for item in data:
                 name = item.get('category') or item.get('segment') or item.get('name') or 'Unknown'
                 avg = item.get('average_amount', 0.0)
+                total = item.get('total_amount', 0.0)
                 count = item.get('transaction_count', 0)
-                response += f"- **{name}:** Average = ₹{avg:,.2f}; Transactions = {count:,}\n"
+                if metric in ("amount", "total_amount", "total"):
+                    response += f"- **{name}:** Total = ₹{total:,.2f}; Transactions = {count:,}\n"
+                elif metric == "count":
+                    response += f"- **{name}:** Transactions = {count:,}; Average = ₹{avg:,.2f}\n"
+                else:
+                    response += f"- **{name}:** Average = ₹{avg:,.2f}; Transactions = {count:,}\n"
 
         # Add best performer insight if available
         if result.get('best_performer'):
@@ -360,6 +389,22 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
             response += "\n**Key insights:**\n"
             for insight in insights:
                 response += f"- {insight}\n"
+
+        # Group breakdown (state/bank etc.)
+        groups = result.get('groups', [])
+        if groups:
+            response += "\n**Group breakdown:**\n"
+            for item in groups[:5]:
+                # include fraud rate if available
+                line = f"- {item.get('group','Unknown')}: "
+                if 'fraud_rate' in item:
+                    line += f"{item['fraud_rate']:.2f}% fraud rate"
+                elif 'total' in item:
+                    line += f"{item['total']:,} transactions"
+                else:
+                    numeric = [v for v in item.values() if isinstance(v, (int,float))]
+                    line += str(numeric[0]) if numeric else ''
+                response += line + "\n"
 
         # Fraud-by-category details
         fraud_categories = result.get('fraud_by_category', [])

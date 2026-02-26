@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime
 import pandas as pd
+import altair as alt
 
 # Page configuration
 st.set_page_config(
@@ -52,6 +53,8 @@ if "query_history" not in st.session_state:
     st.session_state.query_history = []
 if "conversation_history" not in st.session_state:
     st.session_state.conversation_history = []
+if "pending_query" not in st.session_state:
+    st.session_state.pending_query = None
 
 # Load API URL from environment or Streamlit secrets, fall back to localhost
 def get_api_url():
@@ -68,6 +71,8 @@ if "session_id" not in st.session_state:
     st.session_state.session_id = None
 if "api_session_status" not in st.session_state:
     st.session_state.api_session_status = "No session"
+if "last_chart" not in st.session_state:
+    st.session_state.last_chart = None
 
 # Sidebar
 with st.sidebar:
@@ -118,32 +123,42 @@ with st.sidebar:
     
     st.divider()
     
-    st.subheader("💡 Tips for Follow-ups")
+    st.subheader("💡 Ask Better Questions")
     st.markdown("""
-    - **Q1:** Ask about any metric
-    - **Q2:** Say "How about X?" to compare
-    - **Q3:** "By state?" reuses previous context
+    - **Start with outcomes:** total value, growth, risk, or efficiency
+    - **Add a lens:** bank, category, state, age group, device, network, or time
+    - **Follow-up works:** "How about X?" or "By state?"
+
+    **Common scopes:**
+    banks, categories, age groups, states, devices, networks
     
     **Example Flow:**
-    1. "Average for Food?"
-    2. "How about Travel?"  ← Compares to Food!
-    3. "By state?" ← Still about Travel
+    1. "Total transaction value by state"
+    2. "How about only Food?"
+    3. "Show top 3 states"
     """)
     
     st.divider()
     
-    st.subheader("📚 Example Queries")
+    st.subheader("📚 Example Questions")
     example_queries = [
-        "What's the average transaction amount?",
-        "Food category transactions?",
-        "How about Travel?",
-        "Fraud rate?",
-        "By state?"
+        "Top banks by total transaction value",
+        "Total transaction value by state",
+        "Average transaction amount by state",
+        "Compare iOS vs Android by total amount",
+        "Fraud rate by state",
+        "Where is failure rate highest by bank?",
+        "Top 3 fraud categories in Delhi",
+        "Transactions from Karnataka by receiver bank",
+        "Average Food amount per state",
+        "Peak hours for transactions in Maharashtra",
+        "Transaction count by device type",
+        "Compare UPI networks by average amount"
     ]
     
     for i, query in enumerate(example_queries, 1):
         if st.button(f"📌 {query}", key=f"example_{i}", use_container_width=True):
-            st.session_state.user_query = query
+            st.session_state.pending_query = query
             st.rerun()
     
     st.divider()
@@ -158,7 +173,8 @@ with st.sidebar:
     st.session_state.api_url = api_url
     
     show_raw = st.checkbox("Show raw data", value=False)
-    show_insights = st.checkbox("Show insights", value=True)
+    # Chart options
+    top_n = st.slider("Top N for charts", min_value=3, max_value=20, value=10)
 
 # Main Header
 col1, col2 = st.columns([3, 1])
@@ -178,6 +194,98 @@ with col2:
 
 st.divider()
 
+# Function to render chart from raw_data
+def render_chart(chart_data, top_n=10):
+    """Render bar chart based on raw_data from API response"""
+    if not chart_data:
+        return
+    
+    try:
+        if 'data' in chart_data and isinstance(chart_data['data'], list):
+            rows = chart_data['data']
+            df = pd.DataFrame(rows)
+            metric = chart_data.get('metric', '')
+            
+            if metric == 'count' or ('transaction_count' in df.columns and metric == 'count'):
+                df = df.sort_values('transaction_count', ascending=False).head(top_n)
+                chart = alt.Chart(df).mark_bar().encode(
+                    x=alt.X('category:N', sort='-y', title='Category'),
+                    y=alt.Y('transaction_count:Q', title='Transaction Count')
+                ).properties(width=700)
+                st.subheader('📊 Comparison (count)')
+                st.altair_chart(chart, use_container_width=True)
+            elif metric.startswith('avg') or ('average_amount' in df.columns and metric == ''):
+                df = df.sort_values('average_amount', ascending=False).head(top_n)
+                chart = alt.Chart(df).mark_bar().encode(
+                    x=alt.X('category:N', sort='-y', title='Category'),
+                    y=alt.Y('average_amount:Q', title='Average Amount')
+                ).properties(width=700)
+                st.subheader('📊 Comparison (avg)')
+                st.altair_chart(chart, use_container_width=True)
+            elif metric in ('amount','total_amount','total') or 'total_amount' in df.columns:
+                df = df.sort_values('total_amount', ascending=False).head(top_n)
+                chart = alt.Chart(df).mark_bar().encode(
+                    x=alt.X('category:N', sort='-y', title='Category'),
+                    y=alt.Y('total_amount:Q', title='Total Amount')
+                ).properties(width=700)
+                st.subheader('📊 Comparison')
+                st.altair_chart(chart, use_container_width=True)
+            elif 'transaction_count' in df.columns:
+                df = df.sort_values('transaction_count', ascending=False).head(top_n)
+                chart = alt.Chart(df).mark_bar().encode(
+                    x=alt.X('category:N', sort='-y', title='Category'),
+                    y=alt.Y('transaction_count:Q', title='Transaction Count')
+                ).properties(width=700)
+                st.subheader('📊 Comparison (count)')
+                st.altair_chart(chart, use_container_width=True)
+        elif 'segments' in chart_data and isinstance(chart_data['segments'], list):
+            rows = chart_data['segments']
+            df = pd.DataFrame(rows)
+            if 'transaction_count' in df.columns:
+                df = df.sort_values('transaction_count', ascending=False).head(top_n)
+                chart = alt.Chart(df).mark_bar().encode(
+                    x=alt.X('segment:N', sort='-y', title='Segment'),
+                    y=alt.Y('transaction_count:Q', title='Transaction Count')
+                ).properties(width=700)
+                st.subheader('📊 Segmentation')
+                st.altair_chart(chart, use_container_width=True)
+            elif 'average_transaction_value' in df.columns:
+                df = df.sort_values('average_transaction_value', ascending=False).head(top_n)
+                chart = alt.Chart(df).mark_bar().encode(
+                    x=alt.X('segment:N', sort='-y', title='Segment'),
+                    y=alt.Y('average_transaction_value:Q', title='Average Transaction Value')
+                ).properties(width=700)
+                st.subheader('📊 Segmentation (avg)')
+                st.altair_chart(chart, use_container_width=True)
+        elif 'groups' in chart_data and isinstance(chart_data['groups'], list):
+            rows = chart_data['groups']
+            df = pd.DataFrame(rows)
+            if 'fraud_rate' in df.columns:
+                df = df.sort_values('fraud_rate', ascending=False)
+                measure = 'fraud_rate'
+                ytitle = 'Fraud Rate (%)'
+            elif 'total' in df.columns:
+                df = df.sort_values('total', ascending=False)
+                measure = 'total'
+                ytitle = 'Total Count'
+            else:
+                numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+                if len(numeric_cols) > 0:
+                    measure = numeric_cols[0]
+                    ytitle = measure.replace('_', ' ').title()
+                else:
+                    measure = None
+            if measure:
+                df = df.head(top_n)
+                chart = alt.Chart(df).mark_bar().encode(
+                    x=alt.X('group:N', sort='-y', title='Group'),
+                    y=alt.Y(f'{measure}:Q', title=ytitle)
+                ).properties(width=700)
+                st.subheader('📊 Groups')
+                st.altair_chart(chart, use_container_width=True)
+    except Exception:
+        pass
+
 # Display conversation history (chat-like format)
 if st.session_state.conversation_history:
     st.subheader("💬 Conversation")
@@ -191,39 +299,23 @@ if st.session_state.conversation_history:
         else:
             with st.chat_message("assistant"):
                 st.markdown(msg["content"])
-                if msg.get("insights") and show_insights:
-                    with st.expander("📊 Key Insights"):
-                        for insight in msg["insights"]:
-                            st.write(f"• {insight}")
+                # Render chart for this response
+                if msg.get("raw_data"):
+                    render_chart(msg["raw_data"], st.session_state.get('top_n', 10))
 
 st.divider()
 
-# Main query section
-st.subheader("🤔 Ask Your Question")
+# Main query section is now at bottom using chat_input for ChatGPT-style layout
 
-user_query = st.text_area(
-    "Enter your question about transaction data:",
-    placeholder="E.g., What's the average transaction amount for Food category?",
-    height=100,
-    key="user_query"
-)
+# Process query when user submits via chat_input or clicks an example
+user_query = st.chat_input("Ask a question about the transaction data...")
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    submit_button = st.button("🚀 Analyze", use_container_width=True)
-with col2:
-    clear_button = st.button("🗑️ Clear", use_container_width=True)
-with col3:
-    if st.button("📞 Get Examples", use_container_width=True):
-        st.info("Check the sidebar for example queries!")
+# If example question was clicked, use pending_query instead
+if st.session_state.pending_query:
+    user_query = st.session_state.pending_query
+    st.session_state.pending_query = None  # Clear pending query
 
-if clear_button:
-    st.session_state.user_query = ""
-    st.rerun()
-
-# Process query
-if submit_button and user_query:
-    
+if user_query:
     with st.spinner("🔍 Analyzing with LLM context..."):
         try:
             api_response = requests.post(
@@ -231,7 +323,7 @@ if submit_button and user_query:
                 json={"query": user_query, "context": {"session_id": st.session_state.session_id}},
                 timeout=30
             )
-            
+
             if api_response.status_code == 200:
                 result = api_response.json()
 
@@ -239,7 +331,7 @@ if submit_button and user_query:
                 returned_session = result.get("session_id")
                 if returned_session:
                     st.session_state.session_id = returned_session
-                
+
                 # Store in conversation history
                 st.session_state.conversation_history.append({
                     "type": "user",
@@ -247,28 +339,30 @@ if submit_button and user_query:
                     "intent": result.get("intent"),
                     "confidence": result.get("confidence_score", 0)
                 })
-                
+
                 st.session_state.conversation_history.append({
                     "type": "assistant",
                     "content": result.get("explanation", ""),
                     "insights": result.get("insights", []),
                     "raw_data": result.get("raw_data", {})
                 })
-                
+                # No longer needed - chart is rendered in conversation loop
+                st.session_state.last_chart = None
+
                 # Add to legacy history
                 st.session_state.query_history.append({
                     "query": user_query,
                     "intent": result.get("intent"),
                     "timestamp": datetime.now()
                 })
-                
+
                 st.success("✓ Analysis Complete!")
                 st.rerun()
-                
+
             else:
                 st.error(f"API Error: {api_response.status_code}")
                 st.error(api_response.text)
-                
+
         except requests.exceptions.ConnectionError:
             st.error("❌ Cannot connect to API. Make sure the server is running on http://localhost:8000")
             st.info("Run `python main.py` in another terminal to start the server")
