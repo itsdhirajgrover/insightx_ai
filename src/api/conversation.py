@@ -88,16 +88,18 @@ class ConversationManager:
         # Start with previous context
         merged = dict(last)
         
-        # Update with current entities
+        # Update with current entities (all additive except for critical grouping keys)
         merged.update(current)
         
-        # Smart preservation: if current query doesn't specify comparison_dimension
-        # but previous one did, preserve it (for follow-ups like "How about Food?")
-        if 'comparison_dimension' not in current and 'comparison_dimension' in last:
-            # Only preserve if current query seems like a filter/refinement (not a new grouping)
-            has_new_grouping = any(k in current for k in ['segment_by', 'comparison_key'])
-            if not has_new_grouping:
-                merged['comparison_dimension'] = last['comparison_dimension']
+        # Preserve important keys UNLESS explicitly overridden
+        # If previous had comparison_dimension and current doesn't have it explicitly,
+        # preserve it (the current query is likely just adding filters)
+        if 'comparison_dimension' in last and 'comparison_dimension' not in current:
+            merged['comparison_dimension'] = last['comparison_dimension']
+        
+        # Same for segment_by
+        if 'segment_by' in last and 'segment_by' not in current:
+            merged['segment_by'] = last['segment_by']
         
         return merged
 

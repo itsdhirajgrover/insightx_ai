@@ -474,22 +474,29 @@ class IntentRecognizer:
 
         # If user mentions the dimension word alone (e.g., 'state' or 'state-wise' hyphen),
         # but we haven't set segmentation/comparison, set a sensible default.
+        # BUT: only if there's a grouping/aggregation keyword present
         if 'comparison_dimension' not in entities and 'segment_by' not in entities:
-            for dim in ['state', 'age', 'category', 'device', 'network', 'bank']:
-                # match standalone word or hyphenated forms like 'state-wise'
-                if re.search(rf"\b{re.escape(dim)}\b", query_lower) or re.search(rf"\b{re.escape(dim)}-wise\b", query_lower) or re.search(rf"\b{re.escape(dim)}wise\b", query_lower):
-                    # map dim to comparison_dimension
-                    dim_map = {
-                        'state': 'state',
-                        'age': 'age_group',
-                        'category': 'merchant_category',
-                        'device': 'device_type',
-                        'network': 'network_type',
-                        'bank': 'bank'
-                    }
-                    entities['comparison_dimension'] = dim_map.get(dim, dim)
-                    # For segmentation intent, segment_by will be set by recognize_intent normalization
-                    break
+            has_grouping_keyword = any(kw in query_lower for kw in 
+                                      ["by ", "per ", "wise", "compare", "comparison", "versus", "vs",
+                                       "total", "sum", "amount", "value", "top", "show", "group",
+                                       "segment", "across"])
+            
+            if has_grouping_keyword:
+                for dim in ['state', 'age', 'category', 'device', 'network', 'bank']:
+                    # match standalone word or hyphenated forms like 'state-wise'
+                    if re.search(rf"\b{re.escape(dim)}\b", query_lower) or re.search(rf"\b{re.escape(dim)}-wise\b", query_lower) or re.search(rf"\b{re.escape(dim)}wise\b", query_lower):
+                        # map dim to comparison_dimension
+                        dim_map = {
+                            'state': 'state',
+                            'age': 'age_group',
+                            'category': 'merchant_category',
+                            'device': 'device_type',
+                            'network': 'network_type',
+                            'bank': 'bank'
+                        }
+                        entities['comparison_dimension'] = dim_map.get(dim, dim)
+                        # For segmentation intent, segment_by will be set by recognize_intent normalization
+                        break
 
         # If comparison_dimension is generic 'bank', refine using directional words
         if entities.get('comparison_dimension') == 'bank':

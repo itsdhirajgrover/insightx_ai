@@ -48,11 +48,27 @@ async def process_query(request: QueryRequest, db: Session = Depends(get_db)):
 
         # Step 2: Merge with conversation context for follow-ups
         if session_id:
+            last_entities = conversation_manager.get_session(session_id).get("last_entities", {}) if conversation_manager.get_session(session_id) else {}
+            last_intent = conversation_manager.get_session(session_id).get("last_intent") if conversation_manager.get_session(session_id) else None
+            
             # Merge previous entities to handle follow-up references
             intent_result.entities = conversation_manager.merge_entities(
                 session_id, 
                 intent_result.entities
             )
+            
+            # Smart intent preservation: if follow-up query is just adding filters/metrics
+            # but not changing the core analysis type, preserve the previous intent
+            current_intent = intent_result.type
+            is_just_filter = (intent_result.type == 'descriptive' and 
+                            last_intent in ['comparative', 'risk_analysis', 'user_segmentation'])
+            is_metric_change = (intent_result.type == 'comparative' and last_intent == 'comparative' and
+                               'metric' in intent_result.entities)
+            is_intent_mismatch = (intent_result.type != last_intent and 
+                                 last_intent in ['risk_analysis', 'user_segmentation'])
+            
+            if is_just_filter or is_metric_change or is_intent_mismatch:
+                intent_result.type = last_intent
             
             # If merged entities have comparison_dimension but intent is descriptive,
             # upgrade to comparative (follow-up that adds filter but maintains grouping)
