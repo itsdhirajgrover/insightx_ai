@@ -301,21 +301,14 @@ class IntentRecognizer:
             if f"{state.lower()} sender" in query_lower:
                 entities['sender_state'] = state
         
-        # Extract receiver state and age group  
-        for state in self.states:
-            if f"receiver in {state.lower()}" in query_lower or f"receiver from {state.lower()}" in query_lower:
-                entities['receiver_state'] = state
-            if f"{state.lower()} receiver" in query_lower:
-                entities['receiver_state'] = state
-        
-        # If just "state" mentioned without sender/receiver context
+        # If just "state" mentioned without sender context
         # First try exact match
         for state in self.states:
-            if state.lower() in query_lower and 'sender_state' not in entities and 'receiver_state' not in entities and 'state' not in entities:
+            if state.lower() in query_lower and 'sender_state' not in entities and 'state' not in entities:
                 entities['state'] = state
                 break
         # If no exact match, try fuzzy match
-        if 'state' not in entities and 'sender_state' not in entities and 'receiver_state' not in entities:
+        if 'state' not in entities and 'sender_state' not in entities:
             for word in query.split():
                 if len(word) > 3:  # Skip short words
                     matched = self.fuzzy_match(word, self.states, threshold=0.80)
@@ -414,11 +407,9 @@ class IntentRecognizer:
         if time_ref:
             entities['time_reference'] = time_ref
 
-        # Handle "to <state>" and "from <state>" patterns for sender/receiver
+        # Handle "from <state>" patterns for sender (model only has sender_state)
         for state in self.states:
             s_low = state.lower()
-            if re.search(rf"\bto\s+{re.escape(s_low)}\b", query_lower) or re.search(rf"transactions to {re.escape(s_low)}", query_lower) or re.search(rf"sent to {re.escape(s_low)}", query_lower):
-                entities['receiver_state'] = state
             if re.search(rf"\bfrom\s+{re.escape(s_low)}\b", query_lower) or re.search(rf"transactions from {re.escape(s_low)}", query_lower) or re.search(rf"sent from {re.escape(s_low)}", query_lower):
                 entities['sender_state'] = state
         

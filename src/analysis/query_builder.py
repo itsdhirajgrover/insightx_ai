@@ -441,13 +441,10 @@ class QueryBuilder:
             base_query = base_query.filter(Transaction.merchant_category == merchant_category)
             base_filters.append(Transaction.merchant_category == merchant_category)
 
-        # state filters (sender/receiver/generic)
+        # state filters (sender/generic - model only has sender_state)
         if 'sender_state' in entities:
             base_query = base_query.filter(Transaction.sender_state == entities['sender_state'])
             base_filters.append(Transaction.sender_state == entities['sender_state'])
-        elif 'receiver_state' in entities:
-            base_query = base_query.filter(Transaction.receiver_state == entities['receiver_state'])
-            base_filters.append(Transaction.receiver_state == entities['receiver_state'])
         elif 'state' in entities:
             # generic state maps to sender_state by default
             base_query = base_query.filter(Transaction.sender_state == entities['state'])
@@ -485,7 +482,6 @@ class QueryBuilder:
             comp_map = {
                 'state': Transaction.sender_state,
                 'sender_state': Transaction.sender_state,
-                'receiver_state': Transaction.receiver_state,
                 'sender_bank': Transaction.sender_bank,
                 'receiver_bank': Transaction.receiver_bank,
                 'bank': Transaction.sender_bank,  # default to sender for generic
