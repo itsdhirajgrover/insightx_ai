@@ -180,6 +180,13 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
         if result.get("groups"):
             summary["groups"] = result["groups"][:3]
 
+        if result.get("temporal"):
+            temporal = result.get("temporal") or {}
+            summary["temporal"] = {
+                "peak_hours": temporal.get("peak_hours", [])[:3],
+                "weekend_split": temporal.get("weekend_split", [])
+            }
+
         return summary
     
     def _format_resolved_entities(self, entities: Optional[Dict[str, Any]]) -> str:
@@ -289,6 +296,23 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
         if stats.get('min_amount') is not None and stats.get('max_amount') is not None:
             response += f"- **Range:** ₹{stats.get('min_amount', 0):,.2f} — ₹{stats.get('max_amount', 0):,.2f}\n"
 
+        # Temporal highlights (peak hours / day-of-week)
+        temporal = result.get('temporal') or {}
+        peak_hours = temporal.get('peak_hours') or []
+        if peak_hours:
+            top = ", ".join([f"{p.get('hour')}:00" for p in peak_hours if p.get('hour') is not None])
+            if top:
+                response += f"- **Peak hours:** {top}\n"
+
+        day_breakdown = temporal.get('day_of_week') or []
+        if day_breakdown:
+            best_day = sorted(day_breakdown, key=lambda x: x.get('transaction_count', 0), reverse=True)[:1]
+            if best_day:
+                day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+                day_idx = best_day[0].get('day_of_week')
+                day_label = day_names[day_idx] if isinstance(day_idx, int) and 0 <= day_idx < 7 else str(day_idx)
+                response += f"- **Busiest day:** {day_label}\n"
+
         return response
     
     def _template_comparative(self, result: Dict[str, Any], insights: list) -> str:
@@ -306,12 +330,22 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
                 avg = item.get('average_amount', 0.0)
                 total = item.get('total_amount', 0.0)
                 count = item.get('transaction_count', 0)
+                success_rate = item.get('success_rate')
                 if metric in ("amount", "total_amount", "total"):
-                    response += f"- **{name}:** Total = ₹{total:,.2f}; Transactions = {count:,}\n"
+                    if success_rate is not None:
+                        response += f"- **{name}:** Total = ₹{total:,.2f}; Success = {success_rate:.2f}%; Transactions = {count:,}\n"
+                    else:
+                        response += f"- **{name}:** Total = ₹{total:,.2f}; Transactions = {count:,}\n"
                 elif metric == "count":
-                    response += f"- **{name}:** Transactions = {count:,}; Average = ₹{avg:,.2f}\n"
+                    if success_rate is not None:
+                        response += f"- **{name}:** Transactions = {count:,}; Success = {success_rate:.2f}%; Average = ₹{avg:,.2f}\n"
+                    else:
+                        response += f"- **{name}:** Transactions = {count:,}; Average = ₹{avg:,.2f}\n"
                 else:
-                    response += f"- **{name}:** Average = ₹{avg:,.2f}; Transactions = {count:,}\n"
+                    if success_rate is not None:
+                        response += f"- **{name}:** Average = ₹{avg:,.2f}; Success = {success_rate:.2f}%; Transactions = {count:,}\n"
+                    else:
+                        response += f"- **{name}:** Average = ₹{avg:,.2f}; Transactions = {count:,}\n"
 
         # Add best performer insight if available
         if result.get('best_performer'):
@@ -335,7 +369,8 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
                 seg_name = seg.get('segment') or seg.get('name') or 'Unknown'
                 count = seg.get('transaction_count', 0)
                 avg = seg.get('average_transaction_value') or seg.get('average_amount') or 0.0
-                response += f"- {seg_name}: {count:,} transactions, ₹{avg:,.2f} avg value\n"
+                total = seg.get('total_amount', 0.0)
+                response += f"- {seg_name}: {count:,} transactions, ₹{avg:,.2f} avg, ₹{total:,.2f} total\n"
 
         return response
     
@@ -370,6 +405,32 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
             response += "\n**Categories with highest fraud concerns:**\n"
             for item in fraud_categories[:5]:
                 response += f"- {item.get('category','Unknown')}: {item.get('fraud_count',0):,} flagged transactions\n"
+
+        # Hot-spot breakdowns by rate
+        fraud_hotspots_by_category = result.get('fraud_hotspots_by_category', [])
+        fraud_hotspots_by_state = result.get('fraud_hotspots_by_state', [])
+        fraud_hotspots_by_bank = result.get('fraud_hotspots_by_bank', [])
+        failure_hotspots_by_category = result.get('failure_hotspots_by_category', [])
+        failure_hotspots_by_state = result.get('failure_hotspots_by_state', [])
+        failure_hotspots_by_bank = result.get('failure_hotspots_by_bank', [])
+
+        if fraud_hotspots_by_category or fraud_hotspots_by_state or fraud_hotspots_by_bank:
+            response += "\n**Fraud hot-spots (top 5 by rate):**\n"
+            for item in fraud_hotspots_by_category[:5]:
+                response += f"- Category {item.get('group','Unknown')}: {item.get('fraud_rate',0):.2f}% fraud rate\n"
+            for item in fraud_hotspots_by_state[:5]:
+                response += f"- State {item.get('group','Unknown')}: {item.get('fraud_rate',0):.2f}% fraud rate\n"
+            for item in fraud_hotspots_by_bank[:5]:
+                response += f"- Bank {item.get('group','Unknown')}: {item.get('fraud_rate',0):.2f}% fraud rate\n"
+
+        if failure_hotspots_by_category or failure_hotspots_by_state or failure_hotspots_by_bank:
+            response += "\n**Failure hot-spots (top 5 by rate):**\n"
+            for item in failure_hotspots_by_category[:5]:
+                response += f"- Category {item.get('group','Unknown')}: {item.get('failure_rate',0):.2f}% failure rate\n"
+            for item in failure_hotspots_by_state[:5]:
+                response += f"- State {item.get('group','Unknown')}: {item.get('failure_rate',0):.2f}% failure rate\n"
+            for item in failure_hotspots_by_bank[:5]:
+                response += f"- Bank {item.get('group','Unknown')}: {item.get('failure_rate',0):.2f}% failure rate\n"
 
         # Recommendations
         risk_level = (result.get('risk_level') or 'unknown').lower()

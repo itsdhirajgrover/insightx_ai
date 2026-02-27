@@ -517,6 +517,7 @@ class IntentRecognizer:
             "this year": "year",
             "last week": "last_week",
             "last month": "last_month",
+            "day of week": "day_of_week",
             "morning": "morning",
             "afternoon": "afternoon",
             "evening": "evening",

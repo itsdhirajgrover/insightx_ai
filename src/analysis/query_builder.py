@@ -55,6 +55,61 @@ class QueryBuilder:
             query = query.filter(Transaction.sender_age_group == entities['sender_age_group'])
         elif 'age_group' in entities:  # Fallback for old key
             query = query.filter(Transaction.sender_age_group == entities['age_group'])
+
+        if 'receiver_age_group' in entities:
+            query = query.filter(Transaction.receiver_age_group == entities['receiver_age_group'])
+
+        if 'sender_bank' in entities:
+            query = query.filter(Transaction.sender_bank == entities['sender_bank'])
+        elif 'receiver_bank' in entities:
+            query = query.filter(Transaction.receiver_bank == entities['receiver_bank'])
+
+        if 'network_type' in entities:
+            query = query.filter(Transaction.network_type == entities['network_type'])
+
+        if 'transaction_type' in entities:
+            query = query.filter(Transaction.transaction_type == entities['transaction_type'])
+
+        # Time-based filters
+        day_map = {
+            "monday": 0,
+            "tuesday": 1,
+            "wednesday": 2,
+            "thursday": 3,
+            "friday": 4,
+            "saturday": 5,
+            "sunday": 6
+        }
+
+        time_ref = entities.get('time_reference')
+        if time_ref == "weekend":
+            query = query.filter(Transaction.is_weekend == True)
+        elif time_ref == "weekday":
+            query = query.filter(Transaction.is_weekend == False)
+        elif time_ref == "morning":
+            query = query.filter(Transaction.hour_of_day.between(5, 11))
+        elif time_ref == "afternoon":
+            query = query.filter(Transaction.hour_of_day.between(12, 16))
+        elif time_ref == "evening":
+            query = query.filter(Transaction.hour_of_day.between(17, 20))
+        elif time_ref in ("night", "nighttime"):
+            query = query.filter(
+                (Transaction.hour_of_day.between(21, 23)) | (Transaction.hour_of_day.between(0, 4))
+            )
+
+        if 'hour_of_day' in entities:
+            try:
+                query = query.filter(Transaction.hour_of_day == int(entities['hour_of_day']))
+            except ValueError:
+                pass
+
+        if 'day_of_week' in entities:
+            day_val = day_map.get(str(entities['day_of_week']).lower())
+            if day_val is not None:
+                query = query.filter(Transaction.day_of_week == day_val)
+
+        if 'is_weekend' in entities:
+            query = query.filter(Transaction.is_weekend == True)
         
         # Get transactions
         transactions = query.all()
@@ -68,10 +123,13 @@ class QueryBuilder:
             }
         
         amounts = [t.amount for t in transactions]
-        successful_count = len([t for t in transactions if t.transaction_status == "success"])
+        successful_count = len([
+            t for t in transactions
+            if t.transaction_status and t.transaction_status.lower() == "success"
+        ])
         success_rate = (successful_count / len(transactions) * 100) if transactions else 0
         
-        return {
+        result = {
             "insight": f"Analyzed {len(transactions)} transactions",
             "total_count": len(transactions),
             "statistics": {
@@ -85,6 +143,67 @@ class QueryBuilder:
             },
             "success_rate": success_rate
         }
+
+        # Temporal breakdowns when time-related queries are likely
+        if any(k in entities for k in ['time_reference', 'hour_of_day', 'day_of_week', 'is_weekend']):
+            hourly_rows = query.with_entities(
+                Transaction.hour_of_day.label('hour'),
+                func.count(Transaction.transaction_id).label('count'),
+                func.avg(Transaction.amount).label('avg_amount'),
+                func.sum(Transaction.amount).label('total_amount')
+            ).group_by(Transaction.hour_of_day).all()
+
+            daily_rows = query.with_entities(
+                Transaction.day_of_week.label('day'),
+                func.count(Transaction.transaction_id).label('count'),
+                func.avg(Transaction.amount).label('avg_amount'),
+                func.sum(Transaction.amount).label('total_amount')
+            ).group_by(Transaction.day_of_week).all()
+
+            weekend_rows = query.with_entities(
+                Transaction.is_weekend.label('is_weekend'),
+                func.count(Transaction.transaction_id).label('count')
+            ).group_by(Transaction.is_weekend).all()
+
+            hourly = [
+                {
+                    "hour": int(row[0]) if row[0] is not None else None,
+                    "transaction_count": row[1],
+                    "average_amount": float(row[2]) if row[2] else 0,
+                    "total_amount": float(row[3]) if row[3] else 0
+                }
+                for row in hourly_rows
+            ]
+            hourly = sorted([h for h in hourly if h["hour"] is not None], key=lambda x: x["hour"])
+
+            daily = [
+                {
+                    "day_of_week": int(row[0]) if row[0] is not None else None,
+                    "transaction_count": row[1],
+                    "average_amount": float(row[2]) if row[2] else 0,
+                    "total_amount": float(row[3]) if row[3] else 0
+                }
+                for row in daily_rows
+            ]
+
+            weekend_split = [
+                {
+                    "is_weekend": bool(row[0]),
+                    "transaction_count": row[1]
+                }
+                for row in weekend_rows
+            ]
+
+            peak_hours = sorted(hourly, key=lambda x: x["transaction_count"], reverse=True)[:3]
+
+            result["temporal"] = {
+                "hourly": hourly,
+                "day_of_week": daily,
+                "weekend_split": weekend_split,
+                "peak_hours": peak_hours
+            }
+
+        return result
     
     def _comparative_analysis(self, entities: Dict[str, str], query_text: str = "") -> Dict[str, Any]:
         """
@@ -159,12 +278,17 @@ class QueryBuilder:
         # Build query based on comparison dimension
         comparison_data = []
         
+        success_expr = func.sum(
+            case((func.lower(Transaction.transaction_status) == "success", 1), else_=0)
+        ).label('success_count')
+
         if comparison_key == 'sender_state':
             groups = self.db.query(
                 Transaction.sender_state,
                 func.count(Transaction.transaction_id).label('count'),
                 func.avg(Transaction.amount).label('avg_amount'),
-                func.sum(Transaction.amount).label('total_amount')
+                func.sum(Transaction.amount).label('total_amount'),
+                success_expr
             )
             for filt in base_filters:
                 groups = groups.filter(filt)
@@ -175,7 +299,8 @@ class QueryBuilder:
                 Transaction.merchant_category,
                 func.count(Transaction.transaction_id).label('count'),
                 func.avg(Transaction.amount).label('avg_amount'),
-                func.sum(Transaction.amount).label('total_amount')
+                func.sum(Transaction.amount).label('total_amount'),
+                success_expr
             )
             for filt in base_filters:
                 groups = groups.filter(filt)
@@ -186,7 +311,8 @@ class QueryBuilder:
                 Transaction.sender_age_group,
                 func.count(Transaction.transaction_id).label('count'),
                 func.avg(Transaction.amount).label('avg_amount'),
-                func.sum(Transaction.amount).label('total_amount')
+                func.sum(Transaction.amount).label('total_amount'),
+                success_expr
             )
             for filt in base_filters:
                 groups = groups.filter(filt)
@@ -197,7 +323,8 @@ class QueryBuilder:
                 Transaction.network_type,
                 func.count(Transaction.transaction_id).label('count'),
                 func.avg(Transaction.amount).label('avg_amount'),
-                func.sum(Transaction.amount).label('total_amount')
+                func.sum(Transaction.amount).label('total_amount'),
+                success_expr
             )
             for filt in base_filters:
                 groups = groups.filter(filt)
@@ -208,7 +335,8 @@ class QueryBuilder:
                 Transaction.transaction_type,
                 func.count(Transaction.transaction_id).label('count'),
                 func.avg(Transaction.amount).label('avg_amount'),
-                func.sum(Transaction.amount).label('total_amount')
+                func.sum(Transaction.amount).label('total_amount'),
+                success_expr
             )
             for filt in base_filters:
                 groups = groups.filter(filt)
@@ -219,7 +347,8 @@ class QueryBuilder:
                 Transaction.device_type,
                 func.count(Transaction.transaction_id).label('count'),
                 func.avg(Transaction.amount).label('avg_amount'),
-                func.sum(Transaction.amount).label('total_amount')
+                func.sum(Transaction.amount).label('total_amount'),
+                success_expr
             )
             for filt in base_filters:
                 groups = groups.filter(filt)
@@ -233,7 +362,8 @@ class QueryBuilder:
                 col,
                 func.count(Transaction.transaction_id).label('count'),
                 func.avg(Transaction.amount).label('avg_amount'),
-                func.sum(Transaction.amount).label('total_amount')
+                func.sum(Transaction.amount).label('total_amount'),
+                success_expr
             )
             for filt in base_filters:
                 groups = groups.filter(filt)
@@ -241,11 +371,15 @@ class QueryBuilder:
         
         # Build comparison data
         for group in groups:
+            success_count = group[4] if len(group) > 4 and group[4] else 0
+            success_rate = (success_count / group[1] * 100) if group[1] else 0
             comparison_data.append({
                 "category": group[0] if group[0] else "Unknown",
                 "transaction_count": group[1],
                 "average_amount": float(group[2]) if group[2] else 0,
-                "total_amount": float(group[3]) if group[3] else 0
+                "total_amount": float(group[3]) if group[3] else 0,
+                "success_count": success_count,
+                "success_rate": success_rate
             })
         
         # Determine sort key based on metric
@@ -362,63 +496,66 @@ class QueryBuilder:
         if segment_key in ['age_group']:
             segment_key = 'sender_age_group'
         
-        # Build segments
-        if segment_key == 'sender_age_group':
-            segments = self.db.query(
-                Transaction.sender_age_group,
-                func.count(Transaction.transaction_id).label('count'),
-                func.avg(Transaction.amount).label('avg_amount')
-            ).group_by(Transaction.sender_age_group).all()
-        elif segment_key == 'sender_state':
-            segments = self.db.query(
-                Transaction.sender_state,
-                func.count(Transaction.transaction_id).label('count'),
-                func.avg(Transaction.amount).label('avg_amount')
-            ).group_by(Transaction.sender_state).all()
-        elif segment_key == 'merchant_category':
-            segments = self.db.query(
-                Transaction.merchant_category,
-                func.count(Transaction.transaction_id).label('count'),
-                func.avg(Transaction.amount).label('avg_amount')
-            ).group_by(Transaction.merchant_category).all()
-        elif segment_key == 'device_type':
-            segments = self.db.query(
-                Transaction.device_type,
-                func.count(Transaction.transaction_id).label('count'),
-                func.avg(Transaction.amount).label('avg_amount')
-            ).group_by(Transaction.device_type).all()
-        elif segment_key == 'network_type':
-            segments = self.db.query(
-                Transaction.network_type,
-                func.count(Transaction.transaction_id).label('count'),
-                func.avg(Transaction.amount).label('avg_amount')
-            ).group_by(Transaction.network_type).all()
-        elif segment_key == 'transaction_type':
-            segments = self.db.query(
-                Transaction.transaction_type,
-                func.count(Transaction.transaction_id).label('count'),
-                func.avg(Transaction.amount).label('avg_amount')
-            ).group_by(Transaction.transaction_type).all()
-        elif segment_key == 'sender_bank':
-            segments = self.db.query(
-                Transaction.sender_bank,
-                func.count(Transaction.transaction_id).label('count'),
-                func.avg(Transaction.amount).label('avg_amount')
-            ).group_by(Transaction.sender_bank).all()
-        else:
-            # Default to sender_state
-            segments = self.db.query(
-                Transaction.sender_state,
-                func.count(Transaction.transaction_id).label('count'),
-                func.avg(Transaction.amount).label('avg_amount')
-            ).group_by(Transaction.sender_state).all()
+        segment_map = {
+            'sender_age_group': Transaction.sender_age_group,
+            'receiver_age_group': Transaction.receiver_age_group,
+            'sender_state': Transaction.sender_state,
+            'merchant_category': Transaction.merchant_category,
+            'device_type': Transaction.device_type,
+            'network_type': Transaction.network_type,
+            'transaction_type': Transaction.transaction_type,
+            'sender_bank': Transaction.sender_bank,
+            'receiver_bank': Transaction.receiver_bank
+        }
+        segment_col = segment_map.get(segment_key, Transaction.sender_state)
+
+        # Apply filters from entities (excluding the segmentation dimension)
+        base_filters = []
+        merchant_category = entities.get('merchant_category') or entities.get('category')
+        if merchant_category and segment_key != 'merchant_category':
+            base_filters.append(Transaction.merchant_category == merchant_category)
+
+        sender_state = entities.get('sender_state') or entities.get('state')
+        if sender_state and segment_key != 'sender_state':
+            base_filters.append(Transaction.sender_state == sender_state)
+
+        sender_age_group = entities.get('sender_age_group') or entities.get('age_group')
+        if sender_age_group and segment_key != 'sender_age_group':
+            base_filters.append(Transaction.sender_age_group == sender_age_group)
+
+        receiver_age_group = entities.get('receiver_age_group')
+        if receiver_age_group and segment_key != 'receiver_age_group':
+            base_filters.append(Transaction.receiver_age_group == receiver_age_group)
+
+        if 'sender_bank' in entities and segment_key != 'sender_bank':
+            base_filters.append(Transaction.sender_bank == entities['sender_bank'])
+        if 'receiver_bank' in entities and segment_key != 'receiver_bank':
+            base_filters.append(Transaction.receiver_bank == entities['receiver_bank'])
+
+        if 'device_type' in entities and segment_key != 'device_type':
+            base_filters.append(Transaction.device_type == entities['device_type'])
+        if 'network_type' in entities and segment_key != 'network_type':
+            base_filters.append(Transaction.network_type == entities['network_type'])
+        if 'transaction_type' in entities and segment_key != 'transaction_type':
+            base_filters.append(Transaction.transaction_type == entities['transaction_type'])
+
+        segments_q = self.db.query(
+            segment_col,
+            func.count(Transaction.transaction_id).label('count'),
+            func.avg(Transaction.amount).label('avg_amount'),
+            func.sum(Transaction.amount).label('total_amount')
+        )
+        for filt in base_filters:
+            segments_q = segments_q.filter(filt)
+        segments = segments_q.group_by(segment_col).all()
         
         segment_data = []
         for segment in segments:
             segment_data.append({
                 "segment": segment[0] if segment[0] else "Unknown",
                 "transaction_count": segment[1],
-                "average_transaction_value": float(segment[2]) if segment[2] else 0
+                "average_transaction_value": float(segment[2]) if segment[2] else 0,
+                "total_amount": float(segment[3]) if segment[3] else 0
             })
         
         total_count = sum([s['transaction_count'] for s in segment_data]) if segment_data else 0
@@ -475,7 +612,29 @@ class QueryBuilder:
 
         # Get fraud stats
         fraud_count = base_query.filter(Transaction.fraud_flag == True).count()
-        failed_count = base_query.filter(Transaction.transaction_status == "failed").count()
+        failed_count = base_query.filter(func.lower(Transaction.transaction_status) == "failed").count()
+
+        def _group_risk(col):
+            grp_q = self.db.query(
+                col.label('group'),
+                func.count(Transaction.transaction_id).label('total'),
+                func.sum(case((Transaction.fraud_flag == True, 1), else_=0)).label('fraud_count'),
+                func.sum(case((func.lower(Transaction.transaction_status) == "failed", 1), else_=0)).label('failed_count')
+            )
+            for filt in base_filters:
+                grp_q = grp_q.filter(filt)
+            grp_q = grp_q.group_by(col).all()
+            return [
+                {
+                    'group': row[0] if row[0] else 'Unknown',
+                    'total': row[1],
+                    'fraud_count': row[2],
+                    'failed_count': row[3],
+                    'fraud_rate': (row[2] / row[1] * 100) if row[1] else 0,
+                    'failure_rate': (row[3] / row[1] * 100) if row[1] else 0
+                }
+                for row in grp_q
+            ]
 
         # optional grouping by comparison dimension
         group_results = None
@@ -493,20 +652,20 @@ class QueryBuilder:
             }
             col = comp_map.get(comp)
             if col is not None:
-                grp_q = self.db.query(
-                    col.label('group'),
-                    func.count(Transaction.transaction_id).label('total'),
-                    func.sum(case((Transaction.fraud_flag == True, 1), else_=0)).label('fraud_count')
-                )
-                for filt in base_filters:
-                    grp_q = grp_q.filter(filt)
-                grp_q = grp_q.group_by(col).all()
-                group_results = [{
-                    'group': row[0] if row[0] else 'Unknown',
-                    'total': row[1],
-                    'fraud_count': row[2],
-                    'fraud_rate': (row[2] / row[1] * 100) if row[1] else 0
-                } for row in grp_q]
+                group_results = _group_risk(col)
+
+        # hot-spot breakdowns by category/state/bank (top 5 by rate)
+        by_category = _group_risk(Transaction.merchant_category)
+        by_state = _group_risk(Transaction.sender_state)
+        by_bank = _group_risk(Transaction.sender_bank)
+
+        fraud_hotspots_by_category = sorted(by_category, key=lambda x: x['fraud_rate'], reverse=True)[:5]
+        fraud_hotspots_by_state = sorted(by_state, key=lambda x: x['fraud_rate'], reverse=True)[:5]
+        fraud_hotspots_by_bank = sorted(by_bank, key=lambda x: x['fraud_rate'], reverse=True)[:5]
+
+        failure_hotspots_by_category = sorted(by_category, key=lambda x: x['failure_rate'], reverse=True)[:5]
+        failure_hotspots_by_state = sorted(by_state, key=lambda x: x['failure_rate'], reverse=True)[:5]
+        failure_hotspots_by_bank = sorted(by_bank, key=lambda x: x['failure_rate'], reverse=True)[:5]
 
         # fraud by category should respect any filters applied above (state, bank, etc.)
         fraud_by_category = self.db.query(
@@ -534,6 +693,12 @@ class QueryBuilder:
                 {"category": f[0], "fraud_count": f[1]}
                 for f in fraud_by_category
             ],
+            "fraud_hotspots_by_category": fraud_hotspots_by_category,
+            "fraud_hotspots_by_state": fraud_hotspots_by_state,
+            "fraud_hotspots_by_bank": fraud_hotspots_by_bank,
+            "failure_hotspots_by_category": failure_hotspots_by_category,
+            "failure_hotspots_by_state": failure_hotspots_by_state,
+            "failure_hotspots_by_bank": failure_hotspots_by_bank,
             "risk_level": "high" if (fraud_count / total_transactions * 100) > 5 else "medium" if (fraud_count / total_transactions * 100) > 2 else "low"
         }
         if group_results is not None:

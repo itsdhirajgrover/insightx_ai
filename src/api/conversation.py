@@ -21,6 +21,7 @@ class ConversationManager:
             "last_entities": {},
             "conversation_history": [],  # Full Q&A history for LLM context
             "extracted_context": {},     # Context from previous queries
+            "pending_clarification": None,
         }
         return sid
 
@@ -168,3 +169,17 @@ class ConversationManager:
             del self.sessions[session_id]
             return True
         return False
+
+    def set_pending_clarification(self, session_id: str, clarification: Optional[Dict[str, Any]]) -> None:
+        """Set or clear pending clarification for a session"""
+        s = self.sessions.get(session_id)
+        if not s:
+            return
+        s["pending_clarification"] = clarification
+
+    def get_pending_clarification(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get pending clarification for a session"""
+        s = self.get_session(session_id)
+        if not s:
+            return None
+        return s.get("pending_clarification")

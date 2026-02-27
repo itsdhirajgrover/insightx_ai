@@ -151,9 +151,13 @@ with st.sidebar:
         "Top 3 fraud categories in Delhi",
         "Transactions from Karnataka by receiver bank",
         "Average Food amount per state",
-        "Peak hours for transactions in Maharashtra",
+        "Peak hours for Food transactions",
+        "Day of week pattern for Entertainment",
         "Transaction count by device type",
-        "Compare UPI networks by average amount"
+        "Compare UPI networks by average amount",
+        "Age group trends in Maharashtra",
+        "Sender vs receiver age group for failed transactions",
+        "Weekend vs weekday transaction volume"
     ]
     
     for i, query in enumerate(example_queries, 1):
@@ -283,6 +287,31 @@ def render_chart(chart_data, top_n=10):
                 ).properties(width=700)
                 st.subheader('📊 Groups')
                 st.altair_chart(chart, use_container_width=True)
+        elif 'temporal' in chart_data and isinstance(chart_data['temporal'], dict):
+            temporal = chart_data['temporal']
+            hourly = temporal.get('hourly') or []
+            if hourly:
+                df = pd.DataFrame(hourly)
+                if 'hour' in df.columns and 'transaction_count' in df.columns:
+                    df = df.sort_values('hour')
+                    chart = alt.Chart(df).mark_bar().encode(
+                        x=alt.X('hour:O', title='Hour of Day'),
+                        y=alt.Y('transaction_count:Q', title='Transaction Count')
+                    ).properties(width=700)
+                    st.subheader('📊 Hourly Distribution')
+                    st.altair_chart(chart, use_container_width=True)
+
+            daily = temporal.get('day_of_week') or []
+            if daily:
+                df = pd.DataFrame(daily)
+                if 'day_of_week' in df.columns and 'transaction_count' in df.columns:
+                    df = df.sort_values('day_of_week')
+                    chart = alt.Chart(df).mark_bar().encode(
+                        x=alt.X('day_of_week:O', title='Day of Week (0=Mon)'),
+                        y=alt.Y('transaction_count:Q', title='Transaction Count')
+                    ).properties(width=700)
+                    st.subheader('📊 Day-of-Week Distribution')
+                    st.altair_chart(chart, use_container_width=True)
     except Exception:
         pass
 
@@ -299,6 +328,10 @@ if st.session_state.conversation_history:
         else:
             with st.chat_message("assistant"):
                 st.markdown(msg["content"])
+                if msg.get("insights"):
+                    summary = " | ".join(msg.get("insights", [])[:3])
+                    if summary:
+                        st.caption(f"Insight: {summary}")
                 # Render chart for this response
                 if msg.get("raw_data"):
                     render_chart(msg["raw_data"], st.session_state.get('top_n', 10))

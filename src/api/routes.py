@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+import re
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
@@ -50,6 +51,67 @@ async def process_query(request: QueryRequest, db: Session = Depends(get_db)):
         if session_id:
             last_entities = conversation_manager.get_session(session_id).get("last_entities", {}) if conversation_manager.get_session(session_id) else {}
             last_intent = conversation_manager.get_session(session_id).get("last_intent") if conversation_manager.get_session(session_id) else None
+
+            # If a clarification is pending, resolve it from a short follow-up
+            pending = conversation_manager.get_pending_clarification(session_id)
+            if pending and pending.get("type") == "bank_direction":
+                ql = request.query.lower()
+                if any(k in ql for k in ["sender", "from", "sent from"]):
+                    intent_result.entities["comparison_dimension"] = "sender_bank"
+                    intent_result.type = "comparative"
+                    conversation_manager.set_pending_clarification(session_id, None)
+                elif any(k in ql for k in ["receiver", "to", "sent to"]):
+                    intent_result.entities["comparison_dimension"] = "receiver_bank"
+                    intent_result.type = "comparative"
+                    conversation_manager.set_pending_clarification(session_id, None)
+
+            if pending and pending.get("type") == "state_direction":
+                ql = request.query.lower()
+                if any(k in ql for k in ["sender", "from", "sent from"]):
+                    if pending.get("mode") == "segmentation":
+                        intent_result.entities["segment_by"] = "sender_state"
+                        intent_result.type = "user_segmentation"
+                    else:
+                        intent_result.entities["comparison_dimension"] = "sender_state"
+                        intent_result.type = "comparative"
+                    conversation_manager.set_pending_clarification(session_id, None)
+                elif any(k in ql for k in ["receiver", "to", "sent to"]):
+                    # receiver_state is not available in the dataset
+                    return QueryResponse(
+                        query=request.query,
+                        intent="clarification",
+                        explanation=(
+                            "This dataset includes sender state only. "
+                            "Please confirm if you want totals by sender state."
+                        ),
+                        insights=[],
+                        confidence_score=0.6,
+                        raw_data={
+                            "needs_clarification": True,
+                            "clarification_type": "state_direction",
+                            "options": ["sender_state"]
+                        },
+                        session_id=session_id
+                    )
+
+            if pending and pending.get("type") == "age_direction":
+                ql = request.query.lower()
+                if any(k in ql for k in ["sender", "from", "sent from"]):
+                    if pending.get("mode") == "segmentation":
+                        intent_result.entities["segment_by"] = "sender_age_group"
+                        intent_result.type = "user_segmentation"
+                    else:
+                        intent_result.entities["comparison_dimension"] = "sender_age_group"
+                        intent_result.type = "comparative"
+                    conversation_manager.set_pending_clarification(session_id, None)
+                elif any(k in ql for k in ["receiver", "to", "sent to"]):
+                    if pending.get("mode") == "segmentation":
+                        intent_result.entities["segment_by"] = "receiver_age_group"
+                        intent_result.type = "user_segmentation"
+                    else:
+                        intent_result.entities["comparison_dimension"] = "receiver_age_group"
+                        intent_result.type = "comparative"
+                    conversation_manager.set_pending_clarification(session_id, None)
             
             # Merge previous entities to handle follow-up references
             intent_result.entities = conversation_manager.merge_entities(
@@ -75,7 +137,90 @@ async def process_query(request: QueryRequest, db: Session = Depends(get_db)):
             if intent_result.type == 'descriptive' and intent_result.entities.get('comparison_dimension'):
                 intent_result.type = 'comparative'
         
-        # Step 3: Build and execute query
+        # Step 3: Ask for clarification on ambiguous bank direction queries
+        query_lower = request.query.lower()
+        bank_grouping_pattern = re.search(r"\b(by bank|per bank|bank\s*-?wise|of banks|of bank|top\s+banks|bank breakdown)\b", query_lower)
+        has_bank_direction = any(k in query_lower for k in ["sender", "receiver", "from ", "to ", "sent from", "sent to"]) or \
+            intent_result.entities.get("comparison_dimension") in ["sender_bank", "receiver_bank"] and any(k in query_lower for k in ["sender", "receiver", "from ", "to "])
+        if bank_grouping_pattern and not has_bank_direction:
+            # Ensure a session exists to store the pending clarification
+            if not session_id:
+                session_id = conversation_manager.create_session()
+            conversation_manager.set_pending_clarification(session_id, {"type": "bank_direction"})
+
+            clarification_text = (
+                "Your question is about banks, but it is unclear whether you want sender banks or receiver banks. "
+                "Please clarify: do you want totals by sender bank or by receiver bank?"
+            )
+            return QueryResponse(
+                query=request.query,
+                intent="clarification",
+                explanation=clarification_text,
+                insights=[],
+                confidence_score=0.6,
+                raw_data={
+                    "needs_clarification": True,
+                    "clarification_type": "bank_direction",
+                    "options": ["sender_bank", "receiver_bank"]
+                },
+                session_id=session_id
+            )
+
+        # Clarify state direction when grouping is requested but sender/receiver is missing
+        state_grouping_pattern = re.search(r"\b(by state|state\s*-?wise|state breakdown|states)\b", query_lower)
+        has_state_direction = any(k in query_lower for k in ["sender", "receiver", "from ", "to ", "sent from", "sent to"]) or \
+            intent_result.entities.get("comparison_dimension") in ["sender_state", "state"] or \
+            intent_result.entities.get("segment_by") in ["sender_state", "state"]
+        if state_grouping_pattern and not has_state_direction and 'sender_state' not in intent_result.entities and 'state' not in intent_result.entities:
+            if not session_id:
+                session_id = conversation_manager.create_session()
+            mode = "segmentation" if intent_result.type == "user_segmentation" else "comparative"
+            conversation_manager.set_pending_clarification(session_id, {"type": "state_direction", "mode": mode})
+
+            return QueryResponse(
+                query=request.query,
+                intent="clarification",
+                explanation=(
+                    "This dataset includes sender state only. Do you want totals by sender state?"
+                ),
+                insights=[],
+                confidence_score=0.6,
+                raw_data={
+                    "needs_clarification": True,
+                    "clarification_type": "state_direction",
+                    "options": ["sender_state"]
+                },
+                session_id=session_id
+            )
+
+        # Clarify age direction when grouping is requested but sender/receiver is missing
+        age_grouping_pattern = re.search(r"\b(by age|age group|age\s*-?wise|age breakdown)\b", query_lower)
+        has_age_direction = any(k in query_lower for k in ["sender", "receiver", "from ", "to ", "sent from", "sent to"]) or \
+            intent_result.entities.get("comparison_dimension") in ["sender_age_group", "receiver_age_group", "age_group"] or \
+            intent_result.entities.get("segment_by") in ["sender_age_group", "receiver_age_group", "age_group"]
+        if age_grouping_pattern and not has_age_direction and 'sender_age_group' not in intent_result.entities and 'receiver_age_group' not in intent_result.entities and 'age_group' not in intent_result.entities:
+            if not session_id:
+                session_id = conversation_manager.create_session()
+            mode = "segmentation" if intent_result.type == "user_segmentation" else "comparative"
+            conversation_manager.set_pending_clarification(session_id, {"type": "age_direction", "mode": mode})
+
+            return QueryResponse(
+                query=request.query,
+                intent="clarification",
+                explanation=(
+                    "Do you want results by sender age group or receiver age group?"
+                ),
+                insights=[],
+                confidence_score=0.6,
+                raw_data={
+                    "needs_clarification": True,
+                    "clarification_type": "age_direction",
+                    "options": ["sender_age_group", "receiver_age_group"]
+                },
+                session_id=session_id
+            )
+
+        # Step 4: Build and execute query
         query_builder = QueryBuilder(db)
         analysis_result = query_builder.execute_query(
             intent_result.type,
@@ -83,7 +228,7 @@ async def process_query(request: QueryRequest, db: Session = Depends(get_db)):
             request.query  # Pass original query for pattern detection
         )
         
-        # Step 4: Get conversation context for LLM
+        # Step 5: Get conversation context for LLM
         conversation_context = None
         resolved_entities = intent_result.entities
         
@@ -93,7 +238,7 @@ async def process_query(request: QueryRequest, db: Session = Depends(get_db)):
             # Merge current entities with resolved ones
             resolved_entities.update(intent_result.entities)
         
-        # Step 5: Generate context-aware response
+        # Step 6: Generate context-aware response
         response = response_generator.generate_response(
             request.query,
             analysis_result,
@@ -102,7 +247,7 @@ async def process_query(request: QueryRequest, db: Session = Depends(get_db)):
             resolved_entities=resolved_entities
         )
 
-        # Step 6: Create or update session
+        # Step 7: Create or update session
         if not session_id:
             session_id = conversation_manager.create_session()
 
