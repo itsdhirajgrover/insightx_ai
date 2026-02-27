@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 import re
+import time
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
@@ -222,11 +223,17 @@ async def process_query(request: QueryRequest, db: Session = Depends(get_db)):
 
         # Step 4: Build and execute query
         query_builder = QueryBuilder(db)
+        compute_start = time.perf_counter()
         analysis_result = query_builder.execute_query(
             intent_result.type,
             intent_result.entities,
             request.query  # Pass original query for pattern detection
         )
+        compute_ms = (time.perf_counter() - compute_start) * 1000
+        analysis_result["_meta"] = {
+            "compute_ms": round(compute_ms, 2),
+            "dataset_size": analysis_result.get("total_count")
+        }
         
         # Step 5: Get conversation context for LLM
         conversation_context = None

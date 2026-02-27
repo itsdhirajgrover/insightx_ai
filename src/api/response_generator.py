@@ -61,6 +61,10 @@ class ResponseGenerator:
             )
         else:
             explanation = self._generate_template_response(analysis_result, intent_type, insights, resolved_entities)
+
+        footer = self._build_footer(analysis_result, insights)
+        if footer:
+            explanation = f"{explanation}\n\n{footer}"
         
         return {
             "query": query,
@@ -71,6 +75,33 @@ class ResponseGenerator:
             "resolved_entities": resolved_entities,
             "confidence_score": self._calculate_confidence(analysis_result)
         }
+    
+    def _build_footer(self, result: Dict[str, Any], insights: list) -> str:
+        """Build a response footer with compute time, dataset size, and a single insight."""
+        meta = result.get("_meta") or {}
+        compute_ms = meta.get("compute_ms")
+        dataset_size = meta.get("dataset_size")
+
+        footer_parts = []
+        if compute_ms is not None:
+            footer_parts.append(f"Compute time: {compute_ms:.2f} ms")
+        if dataset_size is not None:
+            footer_parts.append(f"Dataset size: {int(dataset_size):,} transactions")
+
+        insight_line = None
+        if insights:
+            insight_line = insights[0]
+
+        if not footer_parts and not insight_line:
+            return ""
+
+        footer = "**Response Summary**\n"
+        if footer_parts:
+            footer += "- " + " | ".join(footer_parts) + "\n"
+        if insight_line:
+            footer += f"- Insight: {insight_line}\n"
+
+        return footer
     
     def _generate_llm_response(
         self, 
