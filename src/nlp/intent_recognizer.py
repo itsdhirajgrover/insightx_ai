@@ -202,7 +202,7 @@ class IntentRecognizer:
         ]
 
         # include bank-related comparative/segmentation triggers
-        if any(kw in query_lower for kw in ["bank wise", "bank-wise", "by bank", "per bank", "per-bank", "amount by bank", "amount per bank"]):
+        if any(kw in query_lower for kw in ["bank wise", "bank-wise", "by bank", "per bank", "per-bank", "amount by bank", "amount per bank", "of bank", "of banks", "of the banks", "with bank", "with banks"]):
             return "comparative"
 
         # If user asks for grouping or aggregation (sum/total/count) prefer comparative/segmentation
@@ -371,7 +371,7 @@ class IntentRecognizer:
                         break
 
         # Patterns like 'per bank', 'by bank', 'bank wise', 'top banks' -> set comparison dimension
-        if re.search(r"\b(bank\s*-?wise|by bank|per bank|amount per bank|amount by bank|top\s+banks|top\s+bank)\b", query_lower):
+        if re.search(r"\b(bank\s*-?wise|by bank|per bank|of bank|of banks|of the banks|amount per bank|amount by bank|with bank|with banks|top\s+banks|top\s+bank)\b", query_lower):
             # prefer explicit direction if present
             if any(w in query_lower for w in ["receiver", "to ", "sent to"]):
                 entities['comparison_dimension'] = 'receiver_bank'
