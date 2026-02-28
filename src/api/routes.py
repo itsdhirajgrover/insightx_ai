@@ -144,28 +144,8 @@ async def process_query(request: QueryRequest, db: Session = Depends(get_db)):
         has_bank_direction = any(k in query_lower for k in ["sender", "receiver", "from ", "to ", "sent from", "sent to"]) or \
             intent_result.entities.get("comparison_dimension") in ["sender_bank", "receiver_bank"] and any(k in query_lower for k in ["sender", "receiver", "from ", "to "])
         if bank_grouping_pattern and not has_bank_direction:
-            # Ensure a session exists to store the pending clarification
-            if not session_id:
-                session_id = conversation_manager.create_session()
-            conversation_manager.set_pending_clarification(session_id, {"type": "bank_direction"})
-
-            clarification_text = (
-                "Your question is about banks, but it is unclear whether you want sender banks or receiver banks. "
-                "Please clarify: do you want totals by sender bank or by receiver bank?"
-            )
-            return QueryResponse(
-                query=request.query,
-                intent="clarification",
-                explanation=clarification_text,
-                insights=[],
-                confidence_score=0.6,
-                raw_data={
-                    "needs_clarification": True,
-                    "clarification_type": "bank_direction",
-                    "options": ["sender_bank", "receiver_bank"]
-                },
-                session_id=session_id
-            )
+            # Default to sender_bank when direction is not specified
+            intent_result.entities["comparison_dimension"] = "sender_bank"
 
         # Clarify state direction when grouping is requested but sender/receiver is missing
         state_grouping_pattern = re.search(r"\b(by state|state\s*-?wise|state breakdown|states)\b", query_lower)

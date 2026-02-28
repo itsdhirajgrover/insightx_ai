@@ -174,8 +174,8 @@ class IntentRecognizer:
         
         # Risk analysis patterns (highest priority)
         risk_keywords = [
-            "fraud", "risk", "failed", "failure rate", "flagged", "suspicious",
-            "anomaly", "unusual", "suspicious", "problem"
+            "fraud", "risk", "failed", "failure rate", "failure", "flagged", "suspicious",
+            "anomaly", "unusual", "problem"
         ]
         
         # Comparative analysis patterns - INCLUDES "TOP X" QUERIES
@@ -201,23 +201,29 @@ class IntentRecognizer:
             "trend", "pattern", "distribution"
         ]
 
-        # include bank-related comparative/segmentation triggers
+        # Check for risk keywords FIRST (before grouping patterns)
+        # Risk analysis with grouping: "fraud rate by state", "failure rate by bank"
+        has_risk_keyword = any(kw in query_lower for kw in risk_keywords)
+        if has_risk_keyword:
+            return "risk_analysis"
+
+        # include bank-related comparative/segmentation triggers (only if NOT risk)
         if any(kw in query_lower for kw in ["bank wise", "bank-wise", "by bank", "per bank", "per-bank", "amount by bank", "amount per bank", "of bank", "of banks", "of the banks", "with bank", "with banks"]):
             return "comparative"
 
         # If user asks for grouping or aggregation (sum/total/count) prefer comparative/segmentation
         if any(kw in query_lower for kw in ["group by", "grouped by", "sum by", "total by", "count by", "amount by", "per "]):
             return "comparative"
+
+        # Explicit grouping by dimension
+        if re.search(r"\bby\s+(receiver\s+bank|sender\s+bank|bank|device|device\s+type|network|networks|state|states|age|age\s+group|category|merchant|transaction\s+type)\b", query_lower):
+            return "comparative"
         
         # "total/sum/amount ... by X" patterns are comparative (e.g., "total transaction value by state")
         if any(agg in query_lower for agg in ["total", "sum", "amount", "value"]) and any(dim in query_lower for dim in ["by state", "by age", "by category", "by device", "by bank", "state wise", "age wise", "category wise"]):
             return "comparative"
         
-        # Priority ordering: risk -> comparative -> segmentation -> descriptive
-        for keyword in risk_keywords:
-            if keyword in query_lower:
-                return "risk_analysis"
-
+        # Priority ordering: comparative -> segmentation -> descriptive
         for keyword in comparative_keywords:
             if keyword in query_lower:
                 return "comparative"
@@ -387,21 +393,27 @@ class IntentRecognizer:
             entities['comparison_dimension'] = 'sender_bank'
 
         # Detect aggregation metric (amount, sum, total, avg, count, fraud/failure rates)
+        # Note: Use if/elif chain so first match wins (total before average before count)
         if re.search(r"\b(sum|total|amount|revenue|spend|spent)\b", query_lower):
             entities['metric'] = 'amount'
-        if re.search(r"\b(average|avg|mean)\b", query_lower):
+        elif re.search(r"\b(average|avg|mean)\b", query_lower):
             entities['metric'] = 'avg_amount'
-        if re.search(r"\b(count|how many|number of|no\. of)\b", query_lower):
+        elif re.search(r"\b(count|how many|number of|no\. of)\b", query_lower):
             entities['metric'] = 'count'
-        if re.search(r"\b(fraud rate|fraud|flagged|fraudulent)\b", query_lower):
+        elif re.search(r"\b(fraud rate|fraud|flagged|fraudulent)\b", query_lower):
             entities['metric'] = 'fraud_rate'
-        if re.search(r"\b(failure rate|failed|failure|failure rate)\b", query_lower):
+        elif re.search(r"\b(failure rate|failed|failure)\b", query_lower):
             entities['metric'] = 'failure_rate'
 
         # capture top/bottom N specification
-        top_match = re.search(r"top\s*(\d+)", query_lower)
+        top_match = re.search(r"top\s*(\d+|three|five|ten)", query_lower)
         if top_match:
-            entities['top_n'] = int(top_match.group(1))
+            top_val = top_match.group(1)
+            if top_val.isdigit():
+                entities['top_n'] = int(top_val)
+            else:
+                word_to_num = {"three": 3, "five": 5, "ten": 10}
+                entities['top_n'] = word_to_num.get(top_val, 3)
         bottom_match = re.search(r"bottom\s*(\d+)", query_lower)
         if bottom_match:
             entities['bottom_n'] = int(bottom_match.group(1))
@@ -450,15 +462,18 @@ class IntentRecognizer:
             entities['comparison_dimension'] = conversion.get(val, val)
 
         # Detect explicit segmentation requests like "by state", "by age", etc.
-        seg_keywords = ["by state", "by age", "by category", "by device", "by network", "by bank", "by status", "by type"]
+        seg_keywords = ["by state", "by age", "by category", "by device", "by network", "by networks", "by bank", "by status", "by type"]
         for seg_kw in seg_keywords:
             if seg_kw in query_lower:
+                if 'comparison_dimension' in entities or 'segment_by' in entities:
+                    break
                 dim_map = {
                     "by state": "state",
                     "by age": "age_group",
                     "by category": "merchant_category",
                     "by device": "device_type",
                     "by network": "network_type",
+                    "by networks": "network_type",
                     "by bank": "bank",
                     "by status": "transaction_status",
                     "by type": "transaction_type"
@@ -482,20 +497,25 @@ class IntentRecognizer:
                                        "segment", "across"])
             
             if has_grouping_keyword:
-                for dim in ['state', 'age', 'category', 'device', 'network', 'bank']:
-                    # match standalone word or hyphenated forms like 'state-wise'
-                    if re.search(rf"\b{re.escape(dim)}\b", query_lower) or re.search(rf"\b{re.escape(dim)}-wise\b", query_lower) or re.search(rf"\b{re.escape(dim)}wise\b", query_lower):
-                        # map dim to comparison_dimension
-                        dim_map = {
-                            'state': 'state',
-                            'age': 'age_group',
-                            'category': 'merchant_category',
-                            'device': 'device_type',
-                            'network': 'network_type',
-                            'bank': 'bank'
-                        }
+                dim_patterns = {
+                    'state': r"\bstates?\b",
+                    'age': r"\bage\s+groups?\b|\bage\b",
+                    'category': r"\bcategories?\b|\bcategory\b",
+                    'device': r"\bdevices?\b|\bdevice\s+type\b|\bdevice\b",
+                    'network': r"\bnetworks?\b|\bnetwork\b",
+                    'bank': r"\bbanks?\b|\bbank\b"
+                }
+                dim_map = {
+                    'state': 'state',
+                    'age': 'age_group',
+                    'category': 'merchant_category',
+                    'device': 'device_type',
+                    'network': 'network_type',
+                    'bank': 'bank'
+                }
+                for dim, pattern in dim_patterns.items():
+                    if re.search(pattern, query_lower):
                         entities['comparison_dimension'] = dim_map.get(dim, dim)
-                        # For segmentation intent, segment_by will be set by recognize_intent normalization
                         break
 
         # If comparison_dimension is generic 'bank', refine using directional words
@@ -504,6 +524,12 @@ class IntentRecognizer:
                 entities['comparison_dimension'] = 'receiver_bank'
             elif any(w in query_lower for w in ["sender", "from ", "sent from", "sent by"]):
                 entities['comparison_dimension'] = 'sender_bank'
+
+        # Weekend vs weekday comparisons
+        if any(kw in query_lower for kw in ["weekend vs weekday", "weekday vs weekend"]):
+            entities['comparison_dimension'] = 'is_weekend'
+            if 'metric' not in entities and "volume" in query_lower:
+                entities['metric'] = 'count'
         
         return entities
     

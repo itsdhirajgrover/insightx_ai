@@ -265,7 +265,8 @@ class QueryBuilder:
             'merchant_category': Transaction.merchant_category,
             'sender_state': Transaction.sender_state,
             'sender_bank': Transaction.sender_bank,
-            'receiver_bank': Transaction.receiver_bank
+            'receiver_bank': Transaction.receiver_bank,
+            'is_weekend': Transaction.is_weekend
         }
         if comparison_values and comparison_key in column_for_key:
             col = column_for_key[comparison_key]
@@ -341,6 +342,18 @@ class QueryBuilder:
             for filt in base_filters:
                 groups = groups.filter(filt)
             groups = groups.group_by(Transaction.transaction_type).all()
+
+        elif comparison_key == 'is_weekend':
+            groups = self.db.query(
+                Transaction.is_weekend,
+                func.count(Transaction.transaction_id).label('count'),
+                func.avg(Transaction.amount).label('avg_amount'),
+                func.sum(Transaction.amount).label('total_amount'),
+                success_expr
+            )
+            for filt in base_filters:
+                groups = groups.filter(filt)
+            groups = groups.group_by(Transaction.is_weekend).all()
             
         else:  # device_type (default)
             groups = self.db.query(
@@ -371,10 +384,13 @@ class QueryBuilder:
         
         # Build comparison data
         for group in groups:
+            label = group[0]
+            if comparison_key == 'is_weekend':
+                label = "Weekend" if group[0] else "Weekday"
             success_count = group[4] if len(group) > 4 and group[4] else 0
             success_rate = (success_count / group[1] * 100) if group[1] else 0
             comparison_data.append({
-                "category": group[0] if group[0] else "Unknown",
+                "category": label if label is not None else "Unknown",
                 "transaction_count": group[1],
                 "average_amount": float(group[2]) if group[2] else 0,
                 "total_amount": float(group[3]) if group[3] else 0,

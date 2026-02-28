@@ -14,12 +14,99 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS with fixed header
 st.markdown("""
 <style>
+    /* Hide the top streamlit menu */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    /* Main container styling */
     .main {
-        padding: 0;
+        padding-top: 0;
     }
+    
+    /* Fixed header - truly fixed to top of page */
+    .header-container {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        padding: 12px 20px;
+        z-index: 9999 !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+        box-sizing: border-box;
+        height: 50px;
+    }
+    
+    /* Push main content down to account for fixed header */
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMainBlockContainer"],
+    .main {
+        margin-top: 60px !important;
+        padding-top: 0 !important;
+        padding-bottom: 70px !important;
+    }
+
+    /* Ensure chat input is fully visible */
+    [data-testid="stChatInput"] {
+        margin-bottom: 10px !important;
+    }
+    
+    .header-left {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        flex: 1;
+    }
+    
+    .header-title {
+        color: white;
+        font-size: 1.4em;
+        font-weight: bold;
+        margin: 0;
+        white-space: nowrap;
+    }
+    
+    .header-tagline {
+        color: #e0e0ff;
+        font-size: 0.85em;
+        margin: 0;
+        white-space: nowrap;
+    }
+    
+    .header-status {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+    }
+    
+    .status-badge {
+        color: white;
+        font-size: 0.85em;
+        padding: 4px 10px;
+        border-radius: 4px;
+        background: rgba(255,255,255,0.2);
+        white-space: nowrap;
+    }
+    
+    .status-active {
+        background: rgba(76, 175, 80, 0.7) !important;
+    }
+    
+    .status-connected {
+        background: rgba(76, 175, 80, 0.7) !important;
+    }
+    
+    .status-error {
+        background: rgba(244, 67, 54, 0.6) !important;
+    }
+    
     .insight-box {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
@@ -27,6 +114,7 @@ st.markdown("""
         border-radius: 10px;
         margin: 10px 0;
     }
+    
     .stat-box {
         background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
         color: white;
@@ -34,12 +122,7 @@ st.markdown("""
         border-radius: 8px;
         text-align: center;
     }
-    .header-title {
-        color: #1f77b4;
-        font-size: 2.5em;
-        font-weight: bold;
-        margin-bottom: 10px;
-    }
+    
     .query-input {
         border: 2px solid #667eea;
         padding: 10px;
@@ -180,23 +263,34 @@ with st.sidebar:
     # Chart options
     top_n = st.slider("Top N for charts", min_value=3, max_value=20, value=10)
 
-# Main Header
-col1, col2 = st.columns([3, 1])
-with col1:
-    st.markdown('<div class="header-title">💳 InsightX</div>', unsafe_allow_html=True)
-    st.markdown("**Natural Language Interface for Payment Analytics**")
-with col2:
-    # Health check
-    try:
-        response = requests.get(f"{st.session_state.api_url}/api/health", timeout=2)
-        if response.status_code == 200:
-            st.success("✓ API Connected")
-        else:
-            st.error("✗ API Error")
-    except:
-        st.error("✗ API Down")
+# Fixed Header - Render immediately after CSS
+# Check API status
+api_status = "not connected"
+try:
+    response = requests.get(f"{st.session_state.api_url}/api/health", timeout=1)
+    api_status = "connected" if response.status_code == 200 else "error"
+except:
+    api_status = "error"
 
-st.divider()
+# Build header status
+session_status = "🔑 Active" if st.session_state.session_id else "📋 New"
+api_indicator = "✅ Connected" if api_status == "connected" else "❌ Error"
+
+# Render fixed header using HTML - appears at top of main content
+st.markdown(f"""
+<div class="header-container">
+    <div class="header-left">
+        <div>
+            <p class="header-title">💳 InsightX</p>
+            <p class="header-tagline">Payment Analytics AI</p>
+        </div>
+    </div>
+    <div class="header-status">
+        <span class="status-badge status-active">{session_status}</span>
+        <span class="status-badge status-connected">{api_indicator}</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 # Function to render chart from raw_data
 def render_chart(chart_data, top_n=10):
@@ -208,9 +302,18 @@ def render_chart(chart_data, top_n=10):
         if 'data' in chart_data and isinstance(chart_data['data'], list):
             rows = chart_data['data']
             df = pd.DataFrame(rows)
-            metric = chart_data.get('metric', '')
+            metric = chart_data.get('metric') or ''
             
-            if metric == 'count' or ('transaction_count' in df.columns and metric == 'count'):
+            # Check for total/amount FIRST (before defaulting to average)
+            if metric in ('amount','total_amount','total') or (metric == '' and 'total_amount' in df.columns):
+                df = df.sort_values('total_amount', ascending=False).head(top_n)
+                chart = alt.Chart(df).mark_bar().encode(
+                    x=alt.X('category:N', sort='-y', title='Category'),
+                    y=alt.Y('total_amount:Q', title='Total Amount')
+                ).properties(width=700)
+                st.subheader('📊 Comparison')
+                st.altair_chart(chart, use_container_width=True)
+            elif metric == 'count' or ('transaction_count' in df.columns and metric == 'count'):
                 df = df.sort_values('transaction_count', ascending=False).head(top_n)
                 chart = alt.Chart(df).mark_bar().encode(
                     x=alt.X('category:N', sort='-y', title='Category'),
@@ -218,21 +321,13 @@ def render_chart(chart_data, top_n=10):
                 ).properties(width=700)
                 st.subheader('📊 Comparison (count)')
                 st.altair_chart(chart, use_container_width=True)
-            elif metric.startswith('avg') or ('average_amount' in df.columns and metric == ''):
+            elif (metric and metric.startswith('avg')) or ('average_amount' in df.columns and metric == ''):
                 df = df.sort_values('average_amount', ascending=False).head(top_n)
                 chart = alt.Chart(df).mark_bar().encode(
                     x=alt.X('category:N', sort='-y', title='Category'),
                     y=alt.Y('average_amount:Q', title='Average Amount')
                 ).properties(width=700)
                 st.subheader('📊 Comparison (avg)')
-                st.altair_chart(chart, use_container_width=True)
-            elif metric in ('amount','total_amount','total') or 'total_amount' in df.columns:
-                df = df.sort_values('total_amount', ascending=False).head(top_n)
-                chart = alt.Chart(df).mark_bar().encode(
-                    x=alt.X('category:N', sort='-y', title='Category'),
-                    y=alt.Y('total_amount:Q', title='Total Amount')
-                ).properties(width=700)
-                st.subheader('📊 Comparison')
                 st.altair_chart(chart, use_container_width=True)
             elif 'transaction_count' in df.columns:
                 df = df.sort_values('transaction_count', ascending=False).head(top_n)

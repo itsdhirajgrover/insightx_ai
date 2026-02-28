@@ -362,7 +362,8 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
                 total = item.get('total_amount', 0.0)
                 count = item.get('transaction_count', 0)
                 success_rate = item.get('success_rate')
-                if metric in ("amount", "total_amount", "total"):
+                # Default to TOTAL when metric is not specified
+                if metric in ("amount", "total_amount", "total") or metric == '':
                     if success_rate is not None:
                         response += f"- **{name}:** Total = ₹{total:,.2f}; Success = {success_rate:.2f}%; Transactions = {count:,}\n"
                     else:
@@ -380,7 +381,10 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
 
         # Add best performer insight if available
         if result.get('best_performer'):
-            response += f"\n- **Insight:** {result['best_performer']} shows the highest average transaction value, indicating strong performance in this segment."
+            if metric in ("amount", "total_amount", "total") or metric == '':
+                response += f"\n- **Insight:** {result['best_performer']} shows the highest total transaction value, indicating strong performance in this segment."
+            else:
+                response += f"\n- **Insight:** {result['best_performer']} shows the highest average transaction value, indicating strong performance in this segment."
 
         return response
     
