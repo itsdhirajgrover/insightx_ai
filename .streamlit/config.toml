@@ -11,3 +11,8 @@ toolbarMode = "viewer"
 
 [logger]
 level = "info"
+
+[server]
+headless = true
+runOnSave = true
+maxUploadSize = 200
