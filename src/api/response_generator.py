@@ -292,9 +292,9 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
         if intent_type == "descriptive":
             base = self._template_descriptive(result, insights)
         elif intent_type == "comparative":
-            base = self._template_comparative(result, insights)
+            base = self._template_comparative(result, insights, resolved_entities)
         elif intent_type == "user_segmentation":
-            base = self._template_segmentation(result, insights)
+            base = self._template_segmentation(result, insights, resolved_entities)
         elif intent_type == "risk_analysis":
             base = self._template_risk(result, insights)
         else:
@@ -346,10 +346,11 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
 
         return response
     
-    def _template_comparative(self, result: Dict[str, Any], insights: list) -> str:
+    def _template_comparative(self, result: Dict[str, Any], insights: list, resolved_entities: Optional[Dict[str, Any]] = None) -> str:
         # Build a clean, tabular-style comparative summary
         key = result.get('comparison_key', 'dimensions')
-        metric = (result.get('metric') or '').lower()
+        # Get metric from resolved_entities if available, otherwise from result
+        metric = (resolved_entities or {}).get('metric', result.get('metric', '')).lower()
         title = key.replace('_', ' ').title() + ' Comparison'
         response = f"**{title}**\n\n"
         response += f"- **Scope:** `{key}`\n"
@@ -362,8 +363,13 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
                 total = item.get('total_amount', 0.0)
                 count = item.get('transaction_count', 0)
                 success_rate = item.get('success_rate')
-                # Default to TOTAL when metric is not specified
-                if metric in ("amount", "total_amount", "total") or metric == '':
+                # Show AVERAGE when avg_amount metric is specified, DEFAULT to AVERAGE if not specified
+                if metric in ("avg_amount", "average", "avg", "mean"):
+                    if success_rate is not None:
+                        response += f"- **{name}:** Average = ₹{avg:,.2f}; Success = {success_rate:.2f}%; Transactions = {count:,}\n"
+                    else:
+                        response += f"- **{name}:** Average = ₹{avg:,.2f}; Transactions = {count:,}\n"
+                elif metric in ("amount", "total_amount", "total"):
                     if success_rate is not None:
                         response += f"- **{name}:** Total = ₹{total:,.2f}; Success = {success_rate:.2f}%; Transactions = {count:,}\n"
                     else:
@@ -374,6 +380,7 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
                     else:
                         response += f"- **{name}:** Transactions = {count:,}; Average = ₹{avg:,.2f}\n"
                 else:
+                    # Default: Show AVERAGE as primary metric
                     if success_rate is not None:
                         response += f"- **{name}:** Average = ₹{avg:,.2f}; Success = {success_rate:.2f}%; Transactions = {count:,}\n"
                     else:
@@ -381,14 +388,15 @@ Keep the response focused and easy to understand. Use ₹ for currency amounts."
 
         # Add best performer insight if available
         if result.get('best_performer'):
-            if metric in ("amount", "total_amount", "total") or metric == '':
+            if metric in ("amount", "total_amount", "total"):
                 response += f"\n- **Insight:** {result['best_performer']} shows the highest total transaction value, indicating strong performance in this segment."
             else:
+                # Default to average for avg_amount, average, or any unspecified metric
                 response += f"\n- **Insight:** {result['best_performer']} shows the highest average transaction value, indicating strong performance in this segment."
 
         return response
     
-    def _template_segmentation(self, result: Dict[str, Any], insights: list) -> str:
+    def _template_segmentation(self, result: Dict[str, Any], insights: list, resolved_entities: Optional[Dict[str, Any]] = None) -> str:
         key = result.get('segment_key', 'segment')
         response = f"**User Segmentation by {key.replace('_',' ').title()}**\n\n"
 

@@ -393,11 +393,11 @@ class IntentRecognizer:
             entities['comparison_dimension'] = 'sender_bank'
 
         # Detect aggregation metric (amount, sum, total, avg, count, fraud/failure rates)
-        # Note: Use if/elif chain so first match wins (total before average before count)
-        if re.search(r"\b(sum|total|amount|revenue|spend|spent)\b", query_lower):
-            entities['metric'] = 'amount'
-        elif re.search(r"\b(average|avg|mean)\b", query_lower):
+        # Note: Use if/elif chain so first match wins - check for AVERAGE BEFORE AMOUNT to prioritize avg queries
+        if re.search(r"\b(average|avg|mean)\b", query_lower):
             entities['metric'] = 'avg_amount'
+        elif re.search(r"\b(sum|total|amount|revenue|spend|spent)\b", query_lower):
+            entities['metric'] = 'amount'
         elif re.search(r"\b(count|how many|number of|no\. of)\b", query_lower):
             entities['metric'] = 'count'
         elif re.search(r"\b(fraud rate|fraud|flagged|fraudulent)\b", query_lower):
