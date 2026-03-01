@@ -61,13 +61,23 @@ st.markdown("""
     [data-testid="stMainBlockContainer"],
     .main {
         margin-top: 70px !important;
-        padding-top: 20px !important;
-        padding-bottom: 70px !important;
+        padding-top: 15px !important;
+        padding-bottom: 20px !important;
     }
 
     /* Ensure chat input is fully visible */
     [data-testid="stChatInput"] {
-        margin-bottom: 10px !important;
+        position: sticky !important;
+        bottom: 0 !important;
+        background: white !important;
+        padding: 15px 20px !important;
+        border-top: 1px solid rgba(102, 126, 234, 0.1) !important;
+        z-index: 100 !important;
+    }
+    
+    [data-testid="stChatInput"] textarea {
+        padding: 12px !important;
+        min-height: 50px !important;
     }
     
     .header-left {
@@ -182,8 +192,14 @@ st.markdown("""
     
     .insight-box p, .insight-box strong {
         color: white;
-        line-height: 1.8;
-        margin: 8px 0;
+        line-height: 1.5;
+        margin: 6px 0 !important;
+    }
+    
+    /* Tighter chat message styling */
+    [data-testid="stChatMessageContent"] {
+        margin: 0 !important;
+        padding: 5px 0 !important;
     }
     
     .stat-box {
@@ -234,11 +250,20 @@ st.markdown("""
     .response-message {
         background: linear-gradient(135deg, rgba(102, 126, 234, 0.08) 0%, rgba(240, 147, 251, 0.08) 100%);
         border-left: 4px solid #667eea;
-        padding: 15px;
+        padding: 12px;
         border-radius: 8px;
-        margin: 10px 0;
+        margin: 5px 0;
         font-size: 0.95em;
-        line-height: 1.6;
+        line-height: 1.4;
+    }
+    
+    .response-message p {
+        margin: 4px 0 !important;
+        line-height: 1.4 !important;
+    }
+    
+    .response-message strong {
+        font-weight: 600;
     }
     
     .error-message {
@@ -253,11 +278,17 @@ st.markdown("""
     
     /* Column layout styling */
     [data-testid="column"] {
-        gap: 20px;
+        gap: 15px !important;
     }
     
     .side-by-side-container {
-        margin: 20px 0;
+        margin: 10px 0 !important;
+    }
+    
+    /* Tighter spacing for conversation */
+    [data-testid="stMarkdownContainer"] p {
+        margin-bottom: 4px !important;
+        line-height: 1.4 !important;
     }
     
     /* Summary section styling */
@@ -840,34 +871,36 @@ def render_chart(chart_data, top_n=10):
 
 # Display conversation history (chat-like format)
 if st.session_state.conversation_history:
-    st.subheader("💬 Conversation")
+    st.markdown("### 💬 Conversation", unsafe_allow_html=True)
     
     for msg in st.session_state.conversation_history:
         if msg["type"] == "user":
             with st.chat_message("user"):
-                st.write(msg["content"])
+                st.markdown(msg["content"], unsafe_allow_html=True)
                 if msg.get("intent"):
                     col1, col2 = st.columns(2)
                     with col1:
-                        st.caption(f"🎯 Intent: **{msg['intent'].replace('_', ' ').title()}**")
+                        st.caption(f"🎯 {msg['intent'].replace('_', ' ').title()}")
                     with col2:
                         confidence_pct = f"{msg['confidence']:.0%}"
                         confidence_color = "🟢" if msg['confidence'] > 0.8 else "🟡" if msg['confidence'] > 0.6 else "🔴"
-                        st.caption(f"{confidence_color} Confidence: **{confidence_pct}**")
+                        st.caption(f"{confidence_color} {confidence_pct}")
         else:
             with st.chat_message("assistant"):
                 # Create side-by-side layout for response and insights
                 if msg.get("insights"):
                     insights_list = msg.get("insights", [])[:3]
                     if insights_list:
-                        col1, col2 = st.columns([1.5, 1])
+                        col1, col2 = st.columns([1.5, 1], gap="small")
                         
                         with col1:
-                            st.markdown("**📊 Response Summary:**")
-                            st.markdown(msg["content"])
+                            st.markdown("**📊 Response:**", unsafe_allow_html=True)
+                            # Format response with reduced line spacing
+                            response_text = msg["content"].replace("\n\n", "\n")
+                            st.markdown(f'<div style="line-height: 1.3; margin: 0;">{response_text}</div>', unsafe_allow_html=True)
                         
                         with col2:
-                            st.markdown("**✨ Key Insights:**")
+                            st.markdown("**✨ Insights:**", unsafe_allow_html=True)
                             st.markdown('<div class="insight-box">', unsafe_allow_html=True)
                             for i, insight in enumerate(insights_list, 1):
                                 st.markdown(f"**{i}.** {insight}")
@@ -879,6 +912,7 @@ if st.session_state.conversation_history:
                 
                 # Render chart for this response
                 if msg.get("raw_data"):
+                    st.markdown("<br>", unsafe_allow_html=True)
                     render_chart(msg["raw_data"], st.session_state.get('top_n', 10))
 
 st.divider()
