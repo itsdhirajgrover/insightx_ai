@@ -192,14 +192,29 @@ st.markdown("""
     
     .insight-box p, .insight-box strong {
         color: white;
-        line-height: 1.5;
-        margin: 6px 0 !important;
+        line-height: 1.6;
+        margin: 8px 0 !important;
     }
     
     /* Tighter chat message styling */
     [data-testid="stChatMessageContent"] {
         margin: 0 !important;
         padding: 5px 0 !important;
+    }
+    
+    /* Better markdown paragraph spacing */
+    [data-testid="stMarkdownContainer"] {
+        margin: 0 !important;
+    }
+    
+    [data-testid="stMarkdownContainer"] > * {
+        margin-bottom: 8px !important;
+        line-height: 1.5 !important;
+    }
+    
+    [data-testid="stMarkdownContainer"] p {
+        margin: 8px 0 !important;
+        line-height: 1.5 !important;
     }
     
     .stat-box {
@@ -254,12 +269,12 @@ st.markdown("""
         border-radius: 8px;
         margin: 5px 0;
         font-size: 0.95em;
-        line-height: 1.4;
+        line-height: 1.5;
     }
     
     .response-message p {
-        margin: 4px 0 !important;
-        line-height: 1.4 !important;
+        margin: 10px 0 !important;
+        line-height: 1.5 !important;
     }
     
     .response-message strong {
@@ -895,9 +910,7 @@ if st.session_state.conversation_history:
                         
                         with col1:
                             st.markdown("**📊 Response:**", unsafe_allow_html=True)
-                            # Format response with reduced line spacing
-                            response_text = msg["content"].replace("\n\n", "\n")
-                            st.markdown(f'<div style="line-height: 1.3; margin: 0;">{response_text}</div>', unsafe_allow_html=True)
+                            st.markdown(msg["content"])
                         
                         with col2:
                             st.markdown("**✨ Insights:**", unsafe_allow_html=True)
