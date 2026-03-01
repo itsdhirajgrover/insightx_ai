@@ -29,7 +29,7 @@ class QueryBuilder:
         elif intent_type == "user_segmentation":
             return self._user_segmentation(entities)
         elif intent_type == "risk_analysis":
-            return self._risk_analysis(entities)
+            return self._risk_analysis(entities, query_text)
         else:
             return self._descriptive_analysis(entities)
     
@@ -584,7 +584,7 @@ class QueryBuilder:
             "total_count": total_count
         }
     
-    def _risk_analysis(self, entities: Dict[str, str]) -> Dict[str, Any]:
+    def _risk_analysis(self, entities: Dict[str, str], query_text: str = "") -> Dict[str, Any]:
         """Analyze fraud flags and failed transactions"""
 
         base_query = self.db.query(Transaction)
@@ -708,37 +708,39 @@ class QueryBuilder:
             "risk_level": "high" if (fraud_count / total_transactions * 100) > 5 else "medium" if (fraud_count / total_transactions * 100) > 2 else "low"
         }
         
+        # Check if user explicitly asked for hotspots
+        asked_for_hotspots = any(kw in query_text.lower() for kw in ["hotspot", "top ", "highest", "worst"])
+        
         # Filter hotspots based on comparison_dimension to return only requested breakdown
         comp_dim = comp or entities.get('comparison_dimension')
         
-        if comp_dim == 'state' or comp_dim == 'sender_state':
-            # User asked for state breakdown - return only state hotspots
-            result["fraud_hotspots_by_state"] = fraud_hotspots_by_state
-            result["failure_hotspots_by_state"] = failure_hotspots_by_state
-        elif comp_dim == 'merchant_category' or comp_dim == 'category':
-            # User asked for category breakdown - return only category hotspots
-            result["fraud_hotspots_by_category"] = fraud_hotspots_by_category
-            result["failure_hotspots_by_category"] = failure_hotspots_by_category
-            result["fraud_by_category"] = [
-                {"category": f[0], "fraud_count": f[1]}
-                for f in fraud_by_category
-            ]
-        elif comp_dim in ('sender_bank', 'receiver_bank', 'bank'):
-            # User asked for bank breakdown - return only bank hotspots
-            result["fraud_hotspots_by_bank"] = fraud_hotspots_by_bank
-            result["failure_hotspots_by_bank"] = failure_hotspots_by_bank
-        else:
-            # No specific dimension requested - return all breakdowns (original behavior)
-            result["fraud_by_category"] = [
-                {"category": f[0], "fraud_count": f[1]}
-                for f in fraud_by_category
-            ]
-            result["fraud_hotspots_by_category"] = fraud_hotspots_by_category
-            result["fraud_hotspots_by_state"] = fraud_hotspots_by_state
-            result["fraud_hotspots_by_bank"] = fraud_hotspots_by_bank
-            result["failure_hotspots_by_category"] = failure_hotspots_by_category
-            result["failure_hotspots_by_state"] = failure_hotspots_by_state
-            result["failure_hotspots_by_bank"] = failure_hotspots_by_bank
+        if asked_for_hotspots:
+            # Only include hotspots if user explicitly asked for them
+            if comp_dim == 'state' or comp_dim == 'sender_state':
+                result["fraud_hotspots_by_state"] = fraud_hotspots_by_state
+                result["failure_hotspots_by_state"] = failure_hotspots_by_state
+            elif comp_dim == 'merchant_category' or comp_dim == 'category':
+                result["fraud_hotspots_by_category"] = fraud_hotspots_by_category
+                result["failure_hotspots_by_category"] = failure_hotspots_by_category
+                result["fraud_by_category"] = [
+                    {"category": f[0], "fraud_count": f[1]}
+                    for f in fraud_by_category
+                ]
+            elif comp_dim in ('sender_bank', 'receiver_bank', 'bank'):
+                result["fraud_hotspots_by_bank"] = fraud_hotspots_by_bank
+                result["failure_hotspots_by_bank"] = failure_hotspots_by_bank
+            else:
+                # No specific dimension but user asked for hotspots - return all
+                result["fraud_by_category"] = [
+                    {"category": f[0], "fraud_count": f[1]}
+                    for f in fraud_by_category
+                ]
+                result["fraud_hotspots_by_category"] = fraud_hotspots_by_category
+                result["fraud_hotspots_by_state"] = fraud_hotspots_by_state
+                result["fraud_hotspots_by_bank"] = fraud_hotspots_by_bank
+                result["failure_hotspots_by_category"] = failure_hotspots_by_category
+                result["failure_hotspots_by_state"] = failure_hotspots_by_state
+                result["failure_hotspots_by_bank"] = failure_hotspots_by_bank
         
         if group_results is not None:
             result['groups'] = group_results
