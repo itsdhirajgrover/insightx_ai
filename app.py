@@ -180,6 +180,12 @@ st.markdown("""
         font-size: 1.2em;
     }
     
+    .insight-box p, .insight-box strong {
+        color: white;
+        line-height: 1.8;
+        margin: 8px 0;
+    }
+    
     .stat-box {
         background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
         color: white;
@@ -243,6 +249,23 @@ st.markdown("""
     .success-message {
         background: rgba(76, 175, 80, 0.1);
         border-left: 4px solid #4caf50;
+    }
+    
+    /* Column layout styling */
+    [data-testid="column"] {
+        gap: 20px;
+    }
+    
+    .side-by-side-container {
+        margin: 20px 0;
+    }
+    
+    /* Summary section styling */
+    .summary-section {
+        background: rgba(255, 255, 255, 0.5);
+        padding: 20px;
+        border-radius: 10px;
+        border: 1px solid rgba(102, 126, 234, 0.2);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -833,15 +856,26 @@ if st.session_state.conversation_history:
                         st.caption(f"{confidence_color} Confidence: **{confidence_pct}**")
         else:
             with st.chat_message("assistant"):
-                st.markdown(msg["content"])
-                
-                # Display insights with better styling
+                # Create side-by-side layout for response and insights
                 if msg.get("insights"):
                     insights_list = msg.get("insights", [])[:3]
                     if insights_list:
-                        st.markdown("**✨ Key Insights:**")
-                        for insight in insights_list:
-                            st.markdown(f"• {insight}")
+                        col1, col2 = st.columns([1.5, 1])
+                        
+                        with col1:
+                            st.markdown("**📊 Response Summary:**")
+                            st.markdown(msg["content"])
+                        
+                        with col2:
+                            st.markdown("**✨ Key Insights:**")
+                            st.markdown('<div class="insight-box">', unsafe_allow_html=True)
+                            for i, insight in enumerate(insights_list, 1):
+                                st.markdown(f"**{i}.** {insight}")
+                            st.markdown('</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown(msg["content"])
+                else:
+                    st.markdown(msg["content"])
                 
                 # Render chart for this response
                 if msg.get("raw_data"):
