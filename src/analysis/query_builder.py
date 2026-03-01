@@ -708,39 +708,51 @@ class QueryBuilder:
             "risk_level": "high" if (fraud_count / total_transactions * 100) > 5 else "medium" if (fraud_count / total_transactions * 100) > 2 else "low"
         }
         
-        # Check if user explicitly asked for hotspots
-        asked_for_hotspots = any(kw in query_text.lower() for kw in ["hotspot", "top ", "highest", "worst"])
+        # Check if user explicitly asked for hotspots - ONLY if they use the word "hotspot"
+        asked_for_hotspots = "hotspot" in query_text.lower()
+        
+        # Determine which metric user asked for
+        metric = entities.get('metric', 'fraud_rate')  # Default to fraud
         
         # Filter hotspots based on comparison_dimension to return only requested breakdown
         comp_dim = comp or entities.get('comparison_dimension')
         
         if asked_for_hotspots:
-            # Only include hotspots if user explicitly asked for them
+            # Only include hotspots if user explicitly asked for them using "hotspot" keyword
+            # AND only include hotspots matching the metric they asked for
             if comp_dim == 'state' or comp_dim == 'sender_state':
-                result["fraud_hotspots_by_state"] = fraud_hotspots_by_state
-                result["failure_hotspots_by_state"] = failure_hotspots_by_state
+                if metric == 'failure_rate':
+                    result["failure_hotspots_by_state"] = failure_hotspots_by_state
+                else:  # fraud_rate or default
+                    result["fraud_hotspots_by_state"] = fraud_hotspots_by_state
             elif comp_dim == 'merchant_category' or comp_dim == 'category':
-                result["fraud_hotspots_by_category"] = fraud_hotspots_by_category
-                result["failure_hotspots_by_category"] = failure_hotspots_by_category
-                result["fraud_by_category"] = [
-                    {"category": f[0], "fraud_count": f[1]}
-                    for f in fraud_by_category
-                ]
+                if metric == 'failure_rate':
+                    result["failure_hotspots_by_category"] = failure_hotspots_by_category
+                else:  # fraud_rate or default
+                    result["fraud_hotspots_by_category"] = fraud_hotspots_by_category
+                    result["fraud_by_category"] = [
+                        {"category": f[0], "fraud_count": f[1]}
+                        for f in fraud_by_category
+                    ]
             elif comp_dim in ('sender_bank', 'receiver_bank', 'bank'):
-                result["fraud_hotspots_by_bank"] = fraud_hotspots_by_bank
-                result["failure_hotspots_by_bank"] = failure_hotspots_by_bank
+                if metric == 'failure_rate':
+                    result["failure_hotspots_by_bank"] = failure_hotspots_by_bank
+                else:  # fraud_rate or default
+                    result["fraud_hotspots_by_bank"] = fraud_hotspots_by_bank
             else:
-                # No specific dimension but user asked for hotspots - return all
-                result["fraud_by_category"] = [
-                    {"category": f[0], "fraud_count": f[1]}
-                    for f in fraud_by_category
-                ]
-                result["fraud_hotspots_by_category"] = fraud_hotspots_by_category
-                result["fraud_hotspots_by_state"] = fraud_hotspots_by_state
-                result["fraud_hotspots_by_bank"] = fraud_hotspots_by_bank
-                result["failure_hotspots_by_category"] = failure_hotspots_by_category
-                result["failure_hotspots_by_state"] = failure_hotspots_by_state
-                result["failure_hotspots_by_bank"] = failure_hotspots_by_bank
+                # No specific dimension but user asked for hotspots - return all matching metric
+                if metric == 'failure_rate':
+                    result["failure_hotspots_by_category"] = failure_hotspots_by_category
+                    result["failure_hotspots_by_state"] = failure_hotspots_by_state
+                    result["failure_hotspots_by_bank"] = failure_hotspots_by_bank
+                else:  # fraud_rate or default
+                    result["fraud_by_category"] = [
+                        {"category": f[0], "fraud_count": f[1]}
+                        for f in fraud_by_category
+                    ]
+                    result["fraud_hotspots_by_category"] = fraud_hotspots_by_category
+                    result["fraud_hotspots_by_state"] = fraud_hotspots_by_state
+                    result["fraud_hotspots_by_bank"] = fraud_hotspots_by_bank
         
         if group_results is not None:
             result['groups'] = group_results
