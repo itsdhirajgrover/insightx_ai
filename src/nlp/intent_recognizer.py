@@ -461,6 +461,23 @@ class IntentRecognizer:
             # assign generic 'bank' and let direction be resolved below if needed
             entities['comparison_dimension'] = conversion.get(val, val)
 
+        # Handle "for each X" pattern (e.g., "for each state", "for each category")
+        if 'comparison_dimension' not in entities and 'segment_by' not in entities:
+            for_each_match = re.search(r"\bfor\s+each\s+(state|age\s+group|age|category|device|network|bank|transaction\s+type)\b", query_lower)
+            if for_each_match:
+                dim_word = for_each_match.group(1).lower()
+                dim_map = {
+                    "state": "state",
+                    "age": "age_group",
+                    "age group": "age_group",
+                    "category": "merchant_category",
+                    "device": "device_type",
+                    "network": "network_type",
+                    "bank": "bank",
+                    "transaction type": "transaction_type"
+                }
+                entities['comparison_dimension'] = dim_map.get(dim_word, dim_word)
+
         # Detect explicit segmentation requests like "by state", "by age", etc.
         seg_keywords = ["by state", "by age", "by category", "by device", "by network", "by networks", "by bank", "by status", "by type"]
         for seg_kw in seg_keywords:
