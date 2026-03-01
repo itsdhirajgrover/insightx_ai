@@ -1,22 +1,33 @@
 import streamlit as st
 import requests
-import json
 import os
 from datetime import datetime
 import pandas as pd
-import altair as alt
+import plotly.graph_objects as go
 
 # Page configuration
 st.set_page_config(
-    page_title="InsightX - Payment Analytics AI",
+    page_title="FinTalk - Payment Analytics AI",
     page_icon="💳",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS with fixed header
+# Custom CSS with fixed header and modern styling
 st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
 <style>
+    * {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+    }
+    
+    h1, h2, h3, h4, h5, h6 {
+        font-family: 'Poppins', sans-serif !important;
+        font-weight: 700 !important;
+        letter-spacing: -0.5px;
+    }
+    
     /* Hide the top streamlit menu */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
@@ -26,30 +37,31 @@ st.markdown("""
         padding-top: 0;
     }
     
-    /* Fixed header - truly fixed to top of page */
+    /* Fixed header - modern gradient */
     .header-container {
         position: fixed !important;
         top: 0 !important;
         left: 0 !important;
         right: 0 !important;
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        padding: 12px 20px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+        padding: 15px 25px;
         z-index: 9999 !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        box-shadow: 0 8px 32px rgba(102, 126, 234, 0.2);
         display: flex;
         align-items: center;
         justify-content: space-between;
         width: 100%;
         box-sizing: border-box;
-        height: 50px;
+        height: 70px;
+        backdrop-filter: blur(10px);
     }
     
-    /* Push main content down to account for fixed header */
+    /* Push main content down */
     [data-testid="stAppViewContainer"],
     [data-testid="stMainBlockContainer"],
     .main {
-        margin-top: 60px !important;
-        padding-top: 0 !important;
+        margin-top: 70px !important;
+        padding-top: 20px !important;
         padding-bottom: 70px !important;
     }
 
@@ -67,17 +79,20 @@ st.markdown("""
     
     .header-title {
         color: white;
-        font-size: 1.4em;
-        font-weight: bold;
+        font-size: 1.6em;
+        font-weight: 800;
         margin: 0;
         white-space: nowrap;
+        font-family: 'Poppins', sans-serif;
+        letter-spacing: -1px;
     }
     
     .header-tagline {
-        color: #e0e0ff;
-        font-size: 0.85em;
+        color: rgba(255,255,255,0.9);
+        font-size: 0.9em;
         margin: 0;
         white-space: nowrap;
+        font-weight: 500;
     }
     
     .header-status {
@@ -89,44 +104,145 @@ st.markdown("""
     .status-badge {
         color: white;
         font-size: 0.85em;
-        padding: 4px 10px;
-        border-radius: 4px;
-        background: rgba(255,255,255,0.2);
+        padding: 6px 14px;
+        border-radius: 20px;
+        background: rgba(255,255,255,0.25);
         white-space: nowrap;
+        font-weight: 600;
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255,255,255,0.3);
+        transition: all 0.3s ease;
     }
     
     .status-active {
-        background: rgba(76, 175, 80, 0.7) !important;
+        background: rgba(76, 175, 80, 0.8) !important;
+        border-color: rgba(76, 175, 80, 0.5) !important;
+        box-shadow: 0 0 10px rgba(76, 175, 80, 0.4);
     }
     
     .status-connected {
-        background: rgba(76, 175, 80, 0.7) !important;
+        background: rgba(76, 175, 80, 0.8) !important;
+        border-color: rgba(76, 175, 80, 0.5) !important;
     }
     
     .status-error {
-        background: rgba(244, 67, 54, 0.6) !important;
+        background: rgba(244, 67, 54, 0.8) !important;
+        border-color: rgba(244, 67, 54, 0.5) !important;
+    }
+    
+    /* Metric cards */
+    .metric-card {
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(240, 147, 251, 0.1) 100%);
+        border: 1px solid rgba(102, 126, 234, 0.2);
+        padding: 20px;
+        border-radius: 12px;
+        margin: 10px 0;
+        backdrop-filter: blur(10px);
+        transition: all 0.3s ease;
+    }
+    
+    .metric-card:hover {
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(240, 147, 251, 0.15) 100%);
+        border-color: rgba(102, 126, 234, 0.4);
+        box-shadow: 0 8px 24px rgba(102, 126, 234, 0.15);
+        transform: translateY(-2px);
+    }
+    
+    .metric-label {
+        font-size: 0.9em;
+        color: rgba(0, 0, 0, 0.6);
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 8px;
+    }
+    
+    .metric-value {
+        font-size: 2em;
+        font-weight: 800;
+        color: #667eea;
+        font-family: 'Poppins', sans-serif;
     }
     
     .insight-box {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
         color: white;
-        padding: 20px;
-        border-radius: 10px;
-        margin: 10px 0;
+        padding: 25px;
+        border-radius: 12px;
+        margin: 15px 0;
+        box-shadow: 0 8px 32px rgba(102, 126, 234, 0.2);
+        border-left: 4px solid rgba(255,255,255,0.5);
+    }
+    
+    .insight-box h3 {
+        margin-top: 0;
+        color: white;
+        font-size: 1.2em;
     }
     
     .stat-box {
         background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
         color: white;
-        padding: 15px;
-        border-radius: 8px;
+        padding: 18px;
+        border-radius: 10px;
         text-align: center;
+        box-shadow: 0 4px 15px rgba(245, 87, 108, 0.3);
+        font-weight: 600;
     }
     
     .query-input {
         border: 2px solid #667eea;
-        padding: 10px;
+        padding: 12px;
         border-radius: 8px;
+        font-size: 1em;
+    }
+    
+    /* Charts styling */
+    .chart-container {
+        background: linear-gradient(135deg, rgba(255,255,255,0.7) 0%, rgba(240, 147, 251, 0.05) 100%);
+        border: 1px solid rgba(102, 126, 234, 0.15);
+        padding: 20px;
+        border-radius: 12px;
+        margin: 20px 0;
+        backdrop-filter: blur(10px);
+    }
+    
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, rgba(102, 126, 234, 0.05) 0%, rgba(240, 147, 251, 0.05) 100%);
+    }
+    
+    /* Button styling */
+    button[kind="primary"] {
+        font-weight: 600 !important;
+        border-radius: 8px !important;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+    }
+    
+    /* Divider */
+    hr {
+        border-color: rgba(102, 126, 234, 0.2) !important;
+    }
+    
+    /* Response styling */
+    .response-message {
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.08) 0%, rgba(240, 147, 251, 0.08) 100%);
+        border-left: 4px solid #667eea;
+        padding: 15px;
+        border-radius: 8px;
+        margin: 10px 0;
+        font-size: 0.95em;
+        line-height: 1.6;
+    }
+    
+    .error-message {
+        background: rgba(244, 67, 54, 0.1);
+        border-left: 4px solid #f44336;
+    }
+    
+    .success-message {
+        background: rgba(76, 175, 80, 0.1);
+        border-left: 4px solid #4caf50;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -159,7 +275,7 @@ if "last_chart" not in st.session_state:
 
 # Sidebar
 with st.sidebar:
-    st.title("💬 InsightX Chat")
+    st.title("💬 FinTalk Chat")
     
     # Conversation Management
     st.subheader("🎯 Conversation")
@@ -281,7 +397,7 @@ st.markdown(f"""
 <div class="header-container">
     <div class="header-left">
         <div>
-            <p class="header-title">💳 InsightX</p>
+            <p class="header-title">💳 FinTalk</p>
             <p class="header-tagline">Payment Analytics AI</p>
         </div>
     </div>
@@ -292,123 +408,412 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Function to render chart from raw_data
+# Function to render chart from raw_data with Plotly
 def render_chart(chart_data, top_n=10):
-    """Render bar chart based on raw_data from API response"""
+    """Render interactive charts using Plotly"""
     if not chart_data:
         return
     
     try:
+        color_palette = ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe', '#00f2fe', '#43e97b', '#fa709a']
+        
+        def get_color_scale():
+            """Return a professional color scale"""
+            return ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#fa7ce1', '#00f2fe', '#4facfe', '#43e97b']
+        
         if 'data' in chart_data and isinstance(chart_data['data'], list):
             rows = chart_data['data']
+            if not rows:
+                return
             df = pd.DataFrame(rows)
             metric = chart_data.get('metric') or ''
             
-            # Check for total/amount FIRST (before defaulting to average)
+            # Check for total/amount FIRST
             if metric in ('amount','total_amount','total') or (metric == '' and 'total_amount' in df.columns):
                 df = df.sort_values('total_amount', ascending=False).head(top_n)
-                chart = alt.Chart(df).mark_bar().encode(
-                    x=alt.X('category:N', sort='-y', title='Category'),
-                    y=alt.Y('total_amount:Q', title='Total Amount')
-                ).properties(width=700)
-                st.subheader('📊 Comparison')
-                st.altair_chart(chart, use_container_width=True)
+                
+                fig = go.Figure(data=[
+                    go.Bar(
+                        x=df['category'],
+                        y=df['total_amount'],
+                        marker=dict(
+                            color=df['total_amount'],
+                            colorscale=get_color_scale(),
+                            showscale=True,
+                            colorbar=dict(title="Amount")
+                        ),
+                        hovertemplate='<b>%{x}</b><br>Total: ₹%{y:,.0f}<extra></extra>',
+                        text=df['total_amount'].apply(lambda x: f'₹{x/100000:.1f}L'),
+                        textposition='outside',
+                    )
+                ])
+                fig.update_layout(
+                    title='<b>Transaction Amount by Category</b>',
+                    xaxis_title='Category',
+                    yaxis_title='Total Amount (₹)',
+                    template='plotly_white',
+                    height=450,
+                    hovermode='x unified',
+                    font=dict(family='Inter, sans-serif', size=12),
+                    margin=dict(t=60, b=50, l=60, r=20),
+                    showlegend=False
+                )
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                st.markdown('</div>', unsafe_allow_html=True)
+                
             elif metric == 'count' or ('transaction_count' in df.columns and metric == 'count'):
                 df = df.sort_values('transaction_count', ascending=False).head(top_n)
-                chart = alt.Chart(df).mark_bar().encode(
-                    x=alt.X('category:N', sort='-y', title='Category'),
-                    y=alt.Y('transaction_count:Q', title='Transaction Count')
-                ).properties(width=700)
-                st.subheader('📊 Comparison (count)')
-                st.altair_chart(chart, use_container_width=True)
+                
+                fig = go.Figure(data=[
+                    go.Bar(
+                        x=df['category'],
+                        y=df['transaction_count'],
+                        marker=dict(
+                            color=df['transaction_count'],
+                            colorscale='Viridis',
+                            showscale=True,
+                            colorbar=dict(title="Count")
+                        ),
+                        hovertemplate='<b>%{x}</b><br>Count: %{y:,}<extra></extra>',
+                        text=df['transaction_count'],
+                        textposition='outside',
+                    )
+                ])
+                fig.update_layout(
+                    title='<b>Transaction Count by Category</b>',
+                    xaxis_title='Category',
+                    yaxis_title='Transaction Count',
+                    template='plotly_white',
+                    height=450,
+                    hovermode='x unified',
+                    font=dict(family='Inter, sans-serif', size=12),
+                    showlegend=False
+                )
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                st.markdown('</div>', unsafe_allow_html=True)
+                
             elif (metric and metric.startswith('avg')) or ('average_amount' in df.columns and metric == ''):
                 df = df.sort_values('average_amount', ascending=False).head(top_n)
-                chart = alt.Chart(df).mark_bar().encode(
-                    x=alt.X('category:N', sort='-y', title='Category'),
-                    y=alt.Y('average_amount:Q', title='Average Amount')
-                ).properties(width=700)
-                st.subheader('📊 Comparison (avg)')
-                st.altair_chart(chart, use_container_width=True)
+                
+                fig = go.Figure(data=[
+                    go.Bar(
+                        x=df['category'],
+                        y=df['average_amount'],
+                        marker=dict(
+                            color=color_palette,
+                            line=dict(color='rgba(0,0,0,0.1)', width=1)
+                        ),
+                        hovertemplate='<b>%{x}</b><br>Avg: ₹%{y:,.0f}<extra></extra>',
+                        text=df['average_amount'].apply(lambda x: f'₹{x:,.0f}'),
+                        textposition='outside',
+                    )
+                ])
+                fig.update_layout(
+                    title='<b>Average Transaction Amount by Category</b>',
+                    xaxis_title='Category',
+                    yaxis_title='Average Amount (₹)',
+                    template='plotly_white',
+                    height=450,
+                    hovermode='x unified',
+                    font=dict(family='Inter, sans-serif', size=12),
+                    showlegend=False
+                )
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                st.markdown('</div>', unsafe_allow_html=True)
+                
             elif 'transaction_count' in df.columns:
                 df = df.sort_values('transaction_count', ascending=False).head(top_n)
-                chart = alt.Chart(df).mark_bar().encode(
-                    x=alt.X('category:N', sort='-y', title='Category'),
-                    y=alt.Y('transaction_count:Q', title='Transaction Count')
-                ).properties(width=700)
-                st.subheader('📊 Comparison (count)')
-                st.altair_chart(chart, use_container_width=True)
+                
+                # Use pie chart for counts if only few categories
+                if len(df) <= 8:
+                    fig = go.Figure(data=[
+                        go.Pie(
+                            labels=df['category'],
+                            values=df['transaction_count'],
+                            marker=dict(colors=color_palette),
+                            hovertemplate='<b>%{label}</b><br>Count: %{value:,}<br>Percentage: %{percent}<extra></extra>',
+                            textposition='inside',
+                            textinfo='label+percent'
+                        )
+                    ])
+                    fig.update_layout(
+                        title='<b>Transaction Distribution by Category</b>',
+                        template='plotly_white',
+                        height=450,
+                        font=dict(family='Inter, sans-serif', size=12),
+                    )
+                else:
+                    fig = go.Figure(data=[
+                        go.Bar(
+                            x=df['category'],
+                            y=df['transaction_count'],
+                            marker=dict(color=df['transaction_count'], colorscale='Turbo'),
+                            text=df['transaction_count'],
+                            textposition='outside',
+                            hovertemplate='<b>%{x}</b><br>Count: %{y:,}<extra></extra>',
+                        )
+                    ])
+                    fig.update_layout(
+                        title='<b>Transaction Count by Category</b>',
+                        xaxis_title='Category',
+                        yaxis_title='Transaction Count',
+                        template='plotly_white',
+                        height=450,
+                        hovermode='x unified',
+                        font=dict(family='Inter, sans-serif', size=12),
+                    )
+                
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                st.markdown('</div>', unsafe_allow_html=True)
+                
         elif 'segments' in chart_data and isinstance(chart_data['segments'], list):
             rows = chart_data['segments']
+            if not rows:
+                return
             df = pd.DataFrame(rows)
+            
             if 'transaction_count' in df.columns:
                 df = df.sort_values('transaction_count', ascending=False).head(top_n)
-                chart = alt.Chart(df).mark_bar().encode(
-                    x=alt.X('segment:N', sort='-y', title='Segment'),
-                    y=alt.Y('transaction_count:Q', title='Transaction Count')
-                ).properties(width=700)
-                st.subheader('📊 Segmentation')
-                st.altair_chart(chart, use_container_width=True)
+                
+                fig = go.Figure(data=[
+                    go.Bar(
+                        x=df['segment'],
+                        y=df['transaction_count'],
+                        marker=dict(
+                            color=color_palette[:len(df)],
+                            line=dict(color='rgba(0,0,0,0.1)', width=1)
+                        ),
+                        hovertemplate='<b>%{x}</b><br>Count: %{y:,}<extra></extra>',
+                        text=df['transaction_count'],
+                        textposition='outside',
+                    )
+                ])
+                fig.update_layout(
+                    title='<b>Transaction Count by Segment</b>',
+                    xaxis_title='Segment',
+                    yaxis_title='Transaction Count',
+                    template='plotly_white',
+                    height=450,
+                    hovermode='x unified',
+                    font=dict(family='Inter, sans-serif', size=12),
+                    showlegend=False
+                )
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                st.markdown('</div>', unsafe_allow_html=True)
+                
             elif 'average_transaction_value' in df.columns:
                 df = df.sort_values('average_transaction_value', ascending=False).head(top_n)
-                chart = alt.Chart(df).mark_bar().encode(
-                    x=alt.X('segment:N', sort='-y', title='Segment'),
-                    y=alt.Y('average_transaction_value:Q', title='Average Transaction Value')
-                ).properties(width=700)
-                st.subheader('📊 Segmentation (avg)')
-                st.altair_chart(chart, use_container_width=True)
+                
+                fig = go.Figure(data=[
+                    go.Bar(
+                        x=df['segment'],
+                        y=df['average_transaction_value'],
+                        marker=dict(
+                            color=df['average_transaction_value'],
+                            colorscale='Electric',
+                            showscale=True,
+                            colorbar=dict(title="Avg Value")
+                        ),
+                        hovertemplate='<b>%{x}</b><br>Avg: ₹%{y:,.0f}<extra></extra>',
+                        text=df['average_transaction_value'].apply(lambda x: f'₹{x:,.0f}'),
+                        textposition='outside',
+                    )
+                ])
+                fig.update_layout(
+                    title='<b>Average Transaction Value by Segment</b>',
+                    xaxis_title='Segment',
+                    yaxis_title='Average Transaction Value (₹)',
+                    template='plotly_white',
+                    height=450,
+                    hovermode='x unified',
+                    font=dict(family='Inter, sans-serif', size=12),
+                    showlegend=False
+                )
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                st.markdown('</div>', unsafe_allow_html=True)
+                
         elif 'groups' in chart_data and isinstance(chart_data['groups'], list):
             rows = chart_data['groups']
+            if not rows:
+                return
             df = pd.DataFrame(rows)
+            
             if 'fraud_rate' in df.columns:
-                df = df.sort_values('fraud_rate', ascending=False)
-                measure = 'fraud_rate'
-                ytitle = 'Fraud Rate (%)'
+                df = df.sort_values('fraud_rate', ascending=False).head(top_n)
+                
+                # Color code by risk level
+                colors = ['#f5576c' if x > 5 else '#ffa502' if x > 2 else '#43e97b' for x in df['fraud_rate']]
+                
+                fig = go.Figure(data=[
+                    go.Bar(
+                        x=df['group'],
+                        y=df['fraud_rate'],
+                        marker=dict(color=colors, line=dict(color='rgba(0,0,0,0.1)', width=1)),
+                        hovertemplate='<b>%{x}</b><br>Fraud Rate: %{y:.2f}%<extra></extra>',
+                        text=df['fraud_rate'].apply(lambda x: f'{x:.2f}%'),
+                        textposition='outside',
+                    )
+                ])
+                fig.update_layout(
+                    title='<b>Fraud Rate by Group</b>',
+                    xaxis_title='Group',
+                    yaxis_title='Fraud Rate (%)',
+                    template='plotly_white',
+                    height=450,
+                    hovermode='x unified',
+                    font=dict(family='Inter, sans-serif', size=12),
+                    showlegend=False,
+                    yaxis=dict(
+                        range=[0, df['fraud_rate'].max() * 1.2]
+                    )
+                )
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                st.markdown('</div>', unsafe_allow_html=True)
+                
+            elif 'failure_rate' in df.columns:
+                df = df.sort_values('failure_rate', ascending=False).head(top_n)
+                
+                colors = ['#f5576c' if x > 10 else '#ffa502' if x > 5 else '#43e97b' for x in df['failure_rate']]
+                
+                fig = go.Figure(data=[
+                    go.Bar(
+                        x=df['group'],
+                        y=df['failure_rate'],
+                        marker=dict(color=colors, line=dict(color='rgba(0,0,0,0.1)', width=1)),
+                        hovertemplate='<b>%{x}</b><br>Failure Rate: %{y:.2f}%<extra></extra>',
+                        text=df['failure_rate'].apply(lambda x: f'{x:.2f}%'),
+                        textposition='outside',
+                    )
+                ])
+                fig.update_layout(
+                    title='<b>Failure Rate by Group</b>',
+                    xaxis_title='Group',
+                    yaxis_title='Failure Rate (%)',
+                    template='plotly_white',
+                    height=450,
+                    hovermode='x unified',
+                    font=dict(family='Inter, sans-serif', size=12),
+                    showlegend=False,
+                    yaxis=dict(
+                        range=[0, df['failure_rate'].max() * 1.2]
+                    )
+                )
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                st.markdown('</div>', unsafe_allow_html=True)
+                
             elif 'total' in df.columns:
-                df = df.sort_values('total', ascending=False)
-                measure = 'total'
-                ytitle = 'Total Count'
-            else:
-                numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-                if len(numeric_cols) > 0:
-                    measure = numeric_cols[0]
-                    ytitle = measure.replace('_', ' ').title()
-                else:
-                    measure = None
-            if measure:
-                df = df.head(top_n)
-                chart = alt.Chart(df).mark_bar().encode(
-                    x=alt.X('group:N', sort='-y', title='Group'),
-                    y=alt.Y(f'{measure}:Q', title=ytitle)
-                ).properties(width=700)
-                st.subheader('📊 Groups')
-                st.altair_chart(chart, use_container_width=True)
+                df = df.sort_values('total', ascending=False).head(top_n)
+                
+                fig = go.Figure(data=[
+                    go.Bar(
+                        x=df['group'],
+                        y=df['total'],
+                        marker=dict(
+                            color=color_palette[:len(df)],
+                            line=dict(color='rgba(0,0,0,0.1)', width=1)
+                        ),
+                        hovertemplate='<b>%{x}</b><br>Total: %{y:,}<extra></extra>',
+                        text=df['total'],
+                        textposition='outside',
+                    )
+                ])
+                fig.update_layout(
+                    title='<b>Total by Group</b>',
+                    xaxis_title='Group',
+                    yaxis_title='Total',
+                    template='plotly_white',
+                    height=450,
+                    hovermode='x unified',
+                    font=dict(family='Inter, sans-serif', size=12),
+                    showlegend=False
+                )
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                st.markdown('</div>', unsafe_allow_html=True)
+                
         elif 'temporal' in chart_data and isinstance(chart_data['temporal'], dict):
             temporal = chart_data['temporal']
+            
             hourly = temporal.get('hourly') or []
             if hourly:
                 df = pd.DataFrame(hourly)
                 if 'hour' in df.columns and 'transaction_count' in df.columns:
                     df = df.sort_values('hour')
-                    chart = alt.Chart(df).mark_bar().encode(
-                        x=alt.X('hour:O', title='Hour of Day'),
-                        y=alt.Y('transaction_count:Q', title='Transaction Count')
-                    ).properties(width=700)
-                    st.subheader('📊 Hourly Distribution')
-                    st.altair_chart(chart, use_container_width=True)
+                    
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(
+                        x=df['hour'],
+                        y=df['transaction_count'],
+                        mode='lines+markers',
+                        name='Transaction Count',
+                        line=dict(color='#667eea', width=3),
+                        marker=dict(size=8, color='#667eea', symbol='circle'),
+                        fill='tozeroy',
+                        fillcolor='rgba(102, 126, 234, 0.2)',
+                        hovertemplate='<b>Hour %{x}</b><br>Count: %{y:,}<extra></extra>'
+                    ))
+                    fig.update_layout(
+                        title='<b>Hourly Transaction Distribution</b>',
+                        xaxis_title='Hour of Day',
+                        yaxis_title='Transaction Count',
+                        template='plotly_white',
+                        height=450,
+                        hovermode='x unified',
+                        font=dict(family='Inter, sans-serif', size=12),
+                        showlegend=False,
+                        xaxis=dict(tickmode='linear', tick0=0, dtick=1)
+                    )
+                    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                    st.markdown('</div>', unsafe_allow_html=True)
 
             daily = temporal.get('day_of_week') or []
             if daily:
                 df = pd.DataFrame(daily)
                 if 'day_of_week' in df.columns and 'transaction_count' in df.columns:
+                    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                    df['day_name'] = df['day_of_week'].apply(lambda x: day_names[int(x)] if int(x) < 7 else str(x))
                     df = df.sort_values('day_of_week')
-                    chart = alt.Chart(df).mark_bar().encode(
-                        x=alt.X('day_of_week:O', title='Day of Week (0=Mon)'),
-                        y=alt.Y('transaction_count:Q', title='Transaction Count')
-                    ).properties(width=700)
-                    st.subheader('📊 Day-of-Week Distribution')
-                    st.altair_chart(chart, use_container_width=True)
-    except Exception:
-        pass
+                    
+                    fig = go.Figure(data=[
+                        go.Bar(
+                            x=df['day_name'],
+                            y=df['transaction_count'],
+                            marker=dict(
+                                color=df['transaction_count'],
+                                colorscale='RdYlGn_r',
+                                showscale=False
+                            ),
+                            hovertemplate='<b>%{x}</b><br>Count: %{y:,}<extra></extra>',
+                            text=df['transaction_count'],
+                            textposition='outside',
+                        )
+                    ])
+                    fig.update_layout(
+                        title='<b>Day-of-Week Transaction Distribution</b>',
+                        xaxis_title='Day of Week',
+                        yaxis_title='Transaction Count',
+                        template='plotly_white',
+                        height=450,
+                        hovermode='x unified',
+                        font=dict(family='Inter, sans-serif', size=12),
+                        showlegend=False,
+                    )
+                    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
+    except Exception as e:
+        st.error(f"Chart rendering error: {str(e)}")
+
 
 # Display conversation history (chat-like format)
 if st.session_state.conversation_history:
@@ -419,14 +824,25 @@ if st.session_state.conversation_history:
             with st.chat_message("user"):
                 st.write(msg["content"])
                 if msg.get("intent"):
-                    st.caption(f"Intent: **{msg['intent']}** | Confidence: **{msg['confidence']:.0%}**")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.caption(f"🎯 Intent: **{msg['intent'].replace('_', ' ').title()}**")
+                    with col2:
+                        confidence_pct = f"{msg['confidence']:.0%}"
+                        confidence_color = "🟢" if msg['confidence'] > 0.8 else "🟡" if msg['confidence'] > 0.6 else "🔴"
+                        st.caption(f"{confidence_color} Confidence: **{confidence_pct}**")
         else:
             with st.chat_message("assistant"):
                 st.markdown(msg["content"])
+                
+                # Display insights with better styling
                 if msg.get("insights"):
-                    summary = " | ".join(msg.get("insights", [])[:3])
-                    if summary:
-                        st.caption(f"Insight: {summary}")
+                    insights_list = msg.get("insights", [])[:3]
+                    if insights_list:
+                        st.markdown("**✨ Key Insights:**")
+                        for insight in insights_list:
+                            st.markdown(f"• {insight}")
+                
                 # Render chart for this response
                 if msg.get("raw_data"):
                     render_chart(msg["raw_data"], st.session_state.get('top_n', 10))
@@ -501,13 +917,11 @@ if user_query:
 
 # Footer
 st.divider()
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.caption("🔧 FastAPI + Streamlit")
-with col2:
-    st.caption(f"📅 {datetime.now().strftime('%b %d, %Y')}")
-with col3:
-    if st.session_state.session_id:
-        st.caption(f"✅ Session Active")
-    else:
-        st.caption(f"⏸️ Start a conversation to begin")
+footer_col1, footer_col2, footer_col3 = st.columns(3)
+with footer_col1:
+    st.markdown("<div style='text-align: center;'><small>⚡ FastAPI + Streamlit</small></div>", unsafe_allow_html=True)
+with footer_col2:
+    st.markdown(f"<div style='text-align: center;'><small>📅 {datetime.now().strftime('%b %d, %Y')}</small></div>", unsafe_allow_html=True)
+with footer_col3:
+    session_text = "✅ Session Active" if st.session_state.session_id else "⏸️ Start a conversation"
+    st.markdown(f"<div style='text-align: center;'><small>{session_text}</small></div>", unsafe_allow_html=True)
