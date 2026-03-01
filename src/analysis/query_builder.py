@@ -717,6 +717,39 @@ class QueryBuilder:
         # Filter hotspots based on comparison_dimension to return only requested breakdown
         comp_dim = comp or entities.get('comparison_dimension')
         
+        # Check if user asked for top/bottom N categories
+        asked_for_top_bottom_categories = (
+            (entities.get('top_n') or entities.get('bottom_n')) and 
+            (comp_dim == 'merchant_category' or comp_dim == 'category')
+        )
+        
+        # Include fraud_by_category if user asked for top/bottom N categories
+        if asked_for_top_bottom_categories:
+            if metric == 'failure_rate':
+                # Track failure counts per category
+                failure_by_category = self.db.query(
+                    Transaction.merchant_category,
+                    func.count(Transaction.transaction_id).label('failure_count')
+                ).filter(func.lower(Transaction.transaction_status) == "failed")
+                for filt in base_filters:
+                    failure_by_category = failure_by_category.filter(filt)
+                failure_by_category = failure_by_category.group_by(Transaction.merchant_category).all()
+                
+                if entities.get('top_n') or entities.get('bottom_n'):
+                    reverse = True if entities.get('top_n') else False
+                    n = entities.get('top_n') or entities.get('bottom_n')
+                    failure_by_category = sorted(failure_by_category, key=lambda x: x[1], reverse=reverse)[:n]
+                
+                result["failure_by_category"] = [
+                    {"category": f[0], "failure_count": f[1]}
+                    for f in failure_by_category
+                ]
+            else:  # fraud_rate
+                result["fraud_by_category"] = [
+                    {"category": f[0], "fraud_count": f[1]}
+                    for f in fraud_by_category
+                ]
+        
         if asked_for_hotspots:
             # Only include hotspots if user explicitly asked for them using "hotspot" keyword
             # AND only include hotspots matching the metric they asked for
@@ -754,6 +787,8 @@ class QueryBuilder:
                     result["fraud_hotspots_by_state"] = fraud_hotspots_by_state
                     result["fraud_hotspots_by_bank"] = fraud_hotspots_by_bank
         
-        if group_results is not None:
+        # Only include groups breakdown if not asking for top/bottom N
+        # (since fraud_by_category already has the limited top/bottom N data)
+        if group_results is not None and not asked_for_top_bottom_categories:
             result['groups'] = group_results
         return result
