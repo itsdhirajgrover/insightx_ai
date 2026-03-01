@@ -5,7 +5,13 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./insightx_db.db")
+# Support persistent volume storage on Railway
+# Use /var/data for Railway volume, or ./data for local development
+DATABASE_PATH = os.getenv("DATABASE_PATH", "./data")
+if not os.path.exists(DATABASE_PATH):
+    os.makedirs(DATABASE_PATH, exist_ok=True)
+
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATABASE_PATH}/insightx_db.db")
 
 # SQLite-specific configuration
 if DATABASE_URL.startswith("sqlite"):
