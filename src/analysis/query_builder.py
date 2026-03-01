@@ -705,18 +705,41 @@ class QueryBuilder:
             "fraud_rate_percent": (fraud_count / total_transactions * 100) if total_transactions > 0 else 0,
             "failed_count": failed_count,
             "failure_rate_percent": (failed_count / total_transactions * 100) if total_transactions > 0 else 0,
-            "fraud_by_category": [
-                {"category": f[0], "fraud_count": f[1]}
-                for f in fraud_by_category
-            ],
-            "fraud_hotspots_by_category": fraud_hotspots_by_category,
-            "fraud_hotspots_by_state": fraud_hotspots_by_state,
-            "fraud_hotspots_by_bank": fraud_hotspots_by_bank,
-            "failure_hotspots_by_category": failure_hotspots_by_category,
-            "failure_hotspots_by_state": failure_hotspots_by_state,
-            "failure_hotspots_by_bank": failure_hotspots_by_bank,
             "risk_level": "high" if (fraud_count / total_transactions * 100) > 5 else "medium" if (fraud_count / total_transactions * 100) > 2 else "low"
         }
+        
+        # Filter hotspots based on comparison_dimension to return only requested breakdown
+        comp_dim = comp or entities.get('comparison_dimension')
+        
+        if comp_dim == 'state' or comp_dim == 'sender_state':
+            # User asked for state breakdown - return only state hotspots
+            result["fraud_hotspots_by_state"] = fraud_hotspots_by_state
+            result["failure_hotspots_by_state"] = failure_hotspots_by_state
+        elif comp_dim == 'merchant_category' or comp_dim == 'category':
+            # User asked for category breakdown - return only category hotspots
+            result["fraud_hotspots_by_category"] = fraud_hotspots_by_category
+            result["failure_hotspots_by_category"] = failure_hotspots_by_category
+            result["fraud_by_category"] = [
+                {"category": f[0], "fraud_count": f[1]}
+                for f in fraud_by_category
+            ]
+        elif comp_dim in ('sender_bank', 'receiver_bank', 'bank'):
+            # User asked for bank breakdown - return only bank hotspots
+            result["fraud_hotspots_by_bank"] = fraud_hotspots_by_bank
+            result["failure_hotspots_by_bank"] = failure_hotspots_by_bank
+        else:
+            # No specific dimension requested - return all breakdowns (original behavior)
+            result["fraud_by_category"] = [
+                {"category": f[0], "fraud_count": f[1]}
+                for f in fraud_by_category
+            ]
+            result["fraud_hotspots_by_category"] = fraud_hotspots_by_category
+            result["fraud_hotspots_by_state"] = fraud_hotspots_by_state
+            result["fraud_hotspots_by_bank"] = fraud_hotspots_by_bank
+            result["failure_hotspots_by_category"] = failure_hotspots_by_category
+            result["failure_hotspots_by_state"] = failure_hotspots_by_state
+            result["failure_hotspots_by_bank"] = failure_hotspots_by_bank
+        
         if group_results is not None:
             result['groups'] = group_results
         return result
