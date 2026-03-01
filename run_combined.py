@@ -16,13 +16,15 @@ def run_combined():
         stderr=subprocess.PIPE
     )
     
-    # Give the API time to start
-    time.sleep(3)
+    # Give the API time to start and load data (can take 1-2 minutes for 250K records)
+    print("⏳ Starting FastAPI backend and loading data (this may take 1-2 minutes)...")
+    time.sleep(5)
     
     # Get the port for Streamlit
     port = os.getenv("PORT", "8501")
     
     # Start Streamlit frontend
+    print(f"🎈 Starting Streamlit on port {port}...")
     streamlit_process = subprocess.Popen(
         [sys.executable, "-m", "streamlit", "run", "app.py", 
          "--server.port", port,

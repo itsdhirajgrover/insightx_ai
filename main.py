@@ -43,7 +43,7 @@ async def startup_event():
             print("📦 Database is empty. Loading sample transactions...")
             from src.database.data_loader import DataLoader
             loader = DataLoader()
-            loader.load_data(num_records=250000)
+            loader.load_and_populate(num_synthetic=250000)
             print("✓ Sample data loaded successfully")
     except Exception as e:
         print(f"✗ Startup error: {e}")
